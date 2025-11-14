@@ -1,0 +1,139 @@
+import React, { useState, useEffect } from 'react'
+import {
+  Box,
+  Typography,
+  Card,
+  CardContent,
+  Button,
+  Grid,
+  CircularProgress,
+} from '@mui/material'
+import { Add, Edit, Delete } from '@mui/icons-material'
+import api from '../services/api'
+import { useSnackbar } from 'notistack'
+
+export default function Deployments() {
+  const [deployments, setDeployments] = useState([])
+  const [loading, setLoading] = useState(true)
+  const { enqueueSnackbar } = useSnackbar()
+
+  useEffect(() => {
+    loadDeployments()
+    const interval = setInterval(loadDeployments, 10000)
+    return () => clearInterval(interval)
+  }, [])
+
+  const loadDeployments = async () => {
+    try {
+      setLoading(true)
+      const data = await api.getDeployments()
+      setDeployments(Array.isArray(data) ? data : [])
+    } catch (error) {
+      console.error('Erro ao carregar deployments:', error)
+      enqueueSnackbar(`Erro ao carregar deployments: ${error.message}`, { variant: 'error' })
+      setDeployments([])
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleEdit = (deployment) => {
+    enqueueSnackbar('Funcionalidade em desenvolvimento', { variant: 'info' })
+  }
+
+  const handleDelete = async (deployment) => {
+    if (!window.confirm(`Deseja realmente deletar o deployment ${deployment.name}?`)) return
+
+    try {
+      await api.deleteDeployment(deployment.name)
+      enqueueSnackbar('Deployment deletado com sucesso', { variant: 'success' })
+      loadDeployments()
+    } catch (error) {
+      enqueueSnackbar(`Erro: ${error.message}`, { variant: 'error' })
+    }
+  }
+
+  const handleAdd = () => {
+    enqueueSnackbar('Funcionalidade em desenvolvimento', { variant: 'info' })
+  }
+
+  if (loading && deployments.length === 0) {
+    return (
+      <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '400px' }}>
+        <CircularProgress />
+      </Box>
+    )
+  }
+
+  return (
+    <Box>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+        <Typography 
+          variant="h4" 
+          sx={{ 
+            fontWeight: 'bold',
+            color: '#F8FAFC',
+            textShadow: '0 2px 8px rgba(0, 0, 0, 0.3)',
+          }}
+        >
+          Deployments
+        </Typography>
+        <Button variant="contained" startIcon={<Add />} onClick={handleAdd}>
+          Adicionar Deployment
+        </Button>
+      </Box>
+      <Grid container spacing={3}>
+        {deployments.length === 0 ? (
+          <Grid item xs={12}>
+            <Card>
+              <CardContent>
+                <Typography variant="body1" color="text.secondary" align="center">
+                  Nenhum deployment encontrado
+                </Typography>
+              </CardContent>
+            </Card>
+          </Grid>
+        ) : (
+          deployments.map((deployment) => (
+            <Grid item xs={12} key={deployment.name}>
+              <Card>
+                <CardContent>
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2 }}>
+                    <Typography variant="h6">{deployment.name || 'N/A'}</Typography>
+                  </Box>
+                  <Box sx={{ mb: 2 }}>
+                    <Typography variant="body2" color="text.secondary">
+                      Réplicas: {deployment.ready_replicas || 0}/{deployment.replicas || 0}
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      Disponíveis: {deployment.available_replicas || 0}
+                    </Typography>
+                  </Box>
+                  <Box sx={{ display: 'flex', gap: 1 }}>
+                    <Button
+                      variant="outlined"
+                      size="small"
+                      startIcon={<Edit />}
+                      onClick={() => handleEdit(deployment)}
+                    >
+                      Editar
+                    </Button>
+                    <Button
+                      variant="outlined"
+                      size="small"
+                      color="error"
+                      startIcon={<Delete />}
+                      onClick={() => handleDelete(deployment)}
+                    >
+                      Deletar
+                    </Button>
+                  </Box>
+                </CardContent>
+              </Card>
+            </Grid>
+          ))
+        )}
+      </Grid>
+    </Box>
+  )
+}

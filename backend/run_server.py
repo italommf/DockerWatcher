@@ -1,4 +1,4 @@
-cd#!/usr/bin/env python
+#!/usr/bin/env python
 """
 Script para iniciar o servidor Django e o watcher em background.
 """

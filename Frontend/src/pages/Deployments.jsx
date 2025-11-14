@@ -7,31 +7,42 @@ import {
   Button,
   Grid,
   CircularProgress,
+  Alert,
 } from '@mui/material'
 import { Add, Edit, Delete } from '@mui/icons-material'
 import api from '../services/api'
 import { useSnackbar } from 'notistack'
 
-export default function Deployments() {
+export default function Deployments({ isConnected = true, onReconnect }) {
   const [deployments, setDeployments] = useState([])
   const [loading, setLoading] = useState(true)
   const { enqueueSnackbar } = useSnackbar()
 
   useEffect(() => {
-    loadDeployments()
-    const interval = setInterval(loadDeployments, 10000)
-    return () => clearInterval(interval)
-  }, [])
+    if (isConnected) {
+      loadDeployments()
+      const interval = setInterval(() => {
+        if (isConnected) loadDeployments()
+      }, 10000)
+      return () => clearInterval(interval)
+    } else {
+      setLoading(false)
+    }
+  }, [isConnected])
 
   const loadDeployments = async () => {
+    if (!isConnected) return // Não tentar carregar se desconectado
+    
     try {
       setLoading(true)
       const data = await api.getDeployments()
       setDeployments(Array.isArray(data) ? data : [])
     } catch (error) {
       console.error('Erro ao carregar deployments:', error)
-      enqueueSnackbar(`Erro ao carregar deployments: ${error.message}`, { variant: 'error' })
-      setDeployments([])
+      // Não limpar deployments em caso de erro - manter cache
+      if (isConnected) {
+        enqueueSnackbar(`Erro ao carregar deployments: ${error.message}`, { variant: 'error' })
+      }
     } finally {
       setLoading(false)
     }
@@ -78,10 +89,24 @@ export default function Deployments() {
         >
           Deployments
         </Typography>
-        <Button variant="contained" startIcon={<Add />} onClick={handleAdd}>
-          Adicionar Deployment
-        </Button>
+        <Box sx={{ display: 'flex', gap: 2 }}>
+          {!isConnected && onReconnect && (
+            <Button variant="outlined" onClick={onReconnect}>
+              Reconectar
+            </Button>
+          )}
+          <Button variant="contained" startIcon={<Add />} onClick={handleAdd} disabled={!isConnected}>
+            Adicionar Deployment
+          </Button>
+        </Box>
       </Box>
+
+      {!isConnected && deployments.length > 0 && (
+        <Alert severity="warning" sx={{ mb: 3 }}>
+          Você está desconectado. Os dados exibidos são do cache. Reconecte para atualizar.
+        </Alert>
+      )}
+
       <Grid container spacing={3}>
         {deployments.length === 0 ? (
           <Grid item xs={12}>

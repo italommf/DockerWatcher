@@ -10,31 +10,42 @@ import {
   Switch,
   FormControlLabel,
   CircularProgress,
+  Alert,
 } from '@mui/material'
 import { Add, Edit, Delete } from '@mui/icons-material'
 import api from '../services/api'
 import { useSnackbar } from 'notistack'
 
-export default function RPAs() {
+export default function RPAs({ isConnected = true, onReconnect }) {
   const [rpas, setRPAs] = useState([])
   const [loading, setLoading] = useState(true)
   const { enqueueSnackbar } = useSnackbar()
 
   useEffect(() => {
-    loadRPAs()
-    const interval = setInterval(loadRPAs, 10000)
-    return () => clearInterval(interval)
-  }, [])
+    if (isConnected) {
+      loadRPAs()
+      const interval = setInterval(() => {
+        if (isConnected) loadRPAs()
+      }, 10000)
+      return () => clearInterval(interval)
+    } else {
+      setLoading(false)
+    }
+  }, [isConnected])
 
   const loadRPAs = async () => {
+    if (!isConnected) return // Não tentar carregar se desconectado
+    
     try {
       setLoading(true)
       const data = await api.getRPAs()
       setRPAs(Array.isArray(data) ? data : [])
     } catch (error) {
       console.error('Erro ao carregar RPAs:', error)
-      enqueueSnackbar(`Erro ao carregar RPAs: ${error.message}`, { variant: 'error' })
-      setRPAs([])
+      // Não limpar rpas em caso de erro - manter cache
+      if (isConnected) {
+        enqueueSnackbar(`Erro ao carregar RPAs: ${error.message}`, { variant: 'error' })
+      }
     } finally {
       setLoading(false)
     }
@@ -96,10 +107,24 @@ export default function RPAs() {
         >
           RPAs (Robôs baseados em execuções)
         </Typography>
-        <Button variant="contained" startIcon={<Add />} onClick={handleAdd}>
-          Adicionar RPA
-        </Button>
+        <Box sx={{ display: 'flex', gap: 2 }}>
+          {!isConnected && onReconnect && (
+            <Button variant="outlined" onClick={onReconnect}>
+              Reconectar
+            </Button>
+          )}
+          <Button variant="contained" startIcon={<Add />} onClick={handleAdd} disabled={!isConnected}>
+            Adicionar RPA
+          </Button>
+        </Box>
       </Box>
+
+      {!isConnected && rpas.length > 0 && (
+        <Alert severity="warning" sx={{ mb: 3 }}>
+          Você está desconectado. Os dados exibidos são do cache. Reconecte para atualizar.
+        </Alert>
+      )}
+
       <Grid container spacing={3}>
         {rpas.length === 0 ? (
           <Grid item xs={12}>

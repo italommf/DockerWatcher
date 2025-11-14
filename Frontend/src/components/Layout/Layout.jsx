@@ -21,6 +21,8 @@ export default function Layout() {
   const [reconnectAttempts, setReconnectAttempts] = useState(0)
   const [isReconnecting, setIsReconnecting] = useState(false)
   const reconnectTimeoutRef = useRef(null)
+  const reconnectAttemptsRef = useRef(0) // Ref para manter o valor atualizado
+  const autoReconnectExhaustedRef = useRef(false) // Flag para indicar que tentativas automáticas esgotaram
   const { enqueueSnackbar } = useSnackbar()
   const { addLog } = useAppLogs()
 
@@ -43,6 +45,8 @@ export default function Layout() {
       // Se ambos estão conectados, resetar tentativas e parar reconexões
       if (reconnectAttempts > 0 || isReconnecting) {
         setReconnectAttempts(0)
+        reconnectAttemptsRef.current = 0
+        autoReconnectExhaustedRef.current = false
         setIsReconnecting(false)
         if (reconnectTimeoutRef.current) {
           clearTimeout(reconnectTimeoutRef.current)
@@ -58,12 +62,11 @@ export default function Layout() {
         
         return () => clearInterval(interval)
       }
-    } else if (reconnectAttempts === 0 && !isReconnecting) {
+    } else if (reconnectAttempts === 0 && !isReconnecting && !autoReconnectExhaustedRef.current) {
       // Primeira desconexão detectada - iniciar reconexão automática
       addLog('warning', 'Conexões perdidas. Iniciando tentativas de reconexão...')
       enqueueSnackbar('Conexões perdidas. Tentando reconectar...', { 
         variant: 'warning',
-        persist: true,
       })
       attemptReconnect(false)
     }
@@ -71,26 +74,31 @@ export default function Layout() {
   }, [connectionStatus.ssh, connectionStatus.mysql])
 
   const attemptReconnect = async (manual = false) => {
-    if (!manual && reconnectAttempts >= 3) {
-      // Limite de tentativas automáticas atingido
-      if (reconnectTimeoutRef.current) {
-        clearTimeout(reconnectTimeoutRef.current)
-      }
-      setIsReconnecting(false)
-      addLog('error', `Falha na reconexão após ${reconnectAttempts} tentativas. Use o botão Reconectar para tentar novamente.`)
-      enqueueSnackbar('Falha na reconexão. Clique em "Reconectar" para tentar novamente.', { 
-        variant: 'error',
-        persist: true,
-      })
-      return
-    }
-
-    setIsReconnecting(true)
-    
     if (!manual) {
-      setReconnectAttempts((prev) => prev + 1)
-      addLog('info', `Tentativa de reconexão ${reconnectAttempts + 1}/3...`)
+      // Usar ref para verificar o valor atualizado
+      if (reconnectAttemptsRef.current >= 2) {
+        // Limite de tentativas automáticas atingido (2 tentativas)
+        if (reconnectTimeoutRef.current) {
+          clearTimeout(reconnectTimeoutRef.current)
+          reconnectTimeoutRef.current = null
+        }
+        autoReconnectExhaustedRef.current = true
+        setIsReconnecting(false)
+        addLog('error', `Falha na reconexão após ${reconnectAttemptsRef.current} tentativas. Use o botão Reconectar para tentar novamente.`)
+        enqueueSnackbar('Falha na reconexão. Clique em "Reconectar" para tentar novamente.', { 
+          variant: 'error',
+        })
+        return
+      }
+      
+      // Incrementar tentativas antes de iniciar
+      reconnectAttemptsRef.current += 1
+      const newAttempt = reconnectAttemptsRef.current
+      setReconnectAttempts(newAttempt)
+      setIsReconnecting(true)
+      addLog('info', `Tentativa de reconexão ${newAttempt}/2...`)
     } else {
+      setIsReconnecting(true)
       addLog('info', 'Tentativa manual de reconexão...')
     }
 
@@ -105,6 +113,7 @@ export default function Layout() {
 
       if (newStatus.ssh && newStatus.mysql) {
         // Conectado com sucesso
+        reconnectAttemptsRef.current = 0
         setReconnectAttempts(0)
         setIsReconnecting(false)
         addLog('success', 'Reconexão bem-sucedida!')
@@ -121,10 +130,10 @@ export default function Layout() {
           enqueueSnackbar('Falha na reconexão. Verifique as configurações.', { variant: 'error' })
           setIsReconnecting(false)
         } else {
-          // Tentar novamente após 5 segundos
+          // Tentar novamente após 10 segundos (manter o valor atual de reconnectAttempts)
           reconnectTimeoutRef.current = setTimeout(() => {
             attemptReconnect(false)
-          }, 5000)
+          }, 10000)
         }
       }
     } catch (error) {
@@ -133,9 +142,10 @@ export default function Layout() {
         enqueueSnackbar(`Erro na reconexão: ${error.message}`, { variant: 'error' })
         setIsReconnecting(false)
       } else {
+        // Tentar novamente após 10 segundos (manter o valor atual de reconnectAttempts)
         reconnectTimeoutRef.current = setTimeout(() => {
           attemptReconnect(false)
-        }, 5000)
+        }, 10000)
       }
     }
   }
@@ -149,13 +159,18 @@ export default function Layout() {
       }
       
       // Só atualizar se o status mudou e não estamos em processo de reconexão
-      if (!isReconnecting && !silent) {
+      // Não atualizar se já esgotamos as tentativas automáticas (para evitar loops)
+      if (!isReconnecting && !silent && !autoReconnectExhaustedRef.current) {
         setConnectionStatus(newStatus)
       } else if (silent) {
         // Verificação silenciosa - apenas atualizar se ambos conectados
         if (newStatus.ssh && newStatus.mysql) {
           setConnectionStatus(newStatus)
         }
+      } else if (newStatus.ssh && newStatus.mysql) {
+        // Se reconectou após esgotar tentativas, atualizar status e resetar flag
+        autoReconnectExhaustedRef.current = false
+        setConnectionStatus(newStatus)
       }
     } catch (error) {
       if (!silent && !isReconnecting) {
@@ -175,6 +190,8 @@ export default function Layout() {
       reconnectTimeoutRef.current = null
     }
     
+    reconnectAttemptsRef.current = 0
+    autoReconnectExhaustedRef.current = false // Resetar flag para permitir novas tentativas automáticas
     setReconnectAttempts(0) // Resetar tentativas para reconexão manual
     attemptReconnect(true)
   }
@@ -231,6 +248,7 @@ export default function Layout() {
           connectionStatus={connectionStatus}
           onReconnect={handleManualReconnect}
           isReconnecting={isReconnecting}
+          reconnectAttempts={reconnectAttempts}
         />
       </Drawer>
       <Box

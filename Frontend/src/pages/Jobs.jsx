@@ -8,29 +8,38 @@ import {
   Chip,
   Grid,
   CircularProgress,
+  Alert,
 } from '@mui/material'
 import { PlayArrow, Stop, Visibility } from '@mui/icons-material'
 import api from '../services/api'
 import { useSnackbar } from 'notistack'
 
-export default function Jobs() {
+export default function Jobs({ isConnected = true, onReconnect }) {
   const [jobs, setJobs] = useState([])
   const [loading, setLoading] = useState(true)
   const { enqueueSnackbar } = useSnackbar()
 
   useEffect(() => {
-    loadJobs()
-    const interval = setInterval(loadJobs, 10000)
-    return () => clearInterval(interval)
-  }, [])
+    if (isConnected) {
+      loadJobs()
+      const interval = setInterval(() => {
+        if (isConnected) loadJobs()
+      }, 10000)
+      return () => clearInterval(interval)
+    } else {
+      setLoading(false)
+    }
+  }, [isConnected])
 
   const loadJobs = async () => {
+    if (!isConnected) return // Não tentar carregar se desconectado
+    
     try {
       setLoading(true)
       const [rpas, jobsStatus] = await Promise.all([api.getRPAs(), api.getJobStatus()])
 
       if (!Array.isArray(rpas)) {
-        setJobs([])
+        // Não limpar jobs se houver erro - manter cache
         return
       }
 
@@ -60,7 +69,10 @@ export default function Jobs() {
       setJobs(jobsData)
     } catch (error) {
       console.error('Erro ao carregar jobs:', error)
-      enqueueSnackbar(`Erro ao carregar jobs: ${error.message}`, { variant: 'error' })
+      // Não limpar jobs em caso de erro - manter cache
+      if (isConnected) {
+        enqueueSnackbar(`Erro ao carregar jobs: ${error.message}`, { variant: 'error' })
+      }
     } finally {
       setLoading(false)
     }
@@ -96,18 +108,30 @@ export default function Jobs() {
 
   return (
     <Box>
-      <Typography 
-        variant="h4" 
-        gutterBottom 
-        sx={{ 
-          mb: 3, 
-          fontWeight: 'bold',
-          color: '#F8FAFC',
-          textShadow: '0 2px 8px rgba(0, 0, 0, 0.3)',
-        }}
-      >
-        Jobs e Execuções
-      </Typography>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+        <Typography 
+          variant="h4" 
+          sx={{ 
+            fontWeight: 'bold',
+            color: '#F8FAFC',
+            textShadow: '0 2px 8px rgba(0, 0, 0, 0.3)',
+          }}
+        >
+          Jobs e Execuções
+        </Typography>
+        {!isConnected && onReconnect && (
+          <Button variant="outlined" onClick={onReconnect}>
+            Reconectar
+          </Button>
+        )}
+      </Box>
+
+      {!isConnected && jobs.length > 0 && (
+        <Alert severity="warning" sx={{ mb: 3 }}>
+          Você está desconectado. Os dados exibidos são do cache. Reconecte para atualizar.
+        </Alert>
+      )}
+
       <Grid container spacing={3}>
         {jobs.length === 0 ? (
           <Grid item xs={12}>

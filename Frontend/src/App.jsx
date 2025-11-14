@@ -83,7 +83,9 @@ function App() {
           vertical: 'top',
           horizontal: 'right',
         }}
-        autoHideDuration={5000}
+        autoHideDuration={3000}
+        dense={false}
+        preventDuplicate={true}
       >
         <AppLogsProvider>
           <Box 

@@ -23,7 +23,7 @@ const menuItems = [
   { id: 'logs', label: 'Logs', icon: <DescriptionIcon /> },
 ]
 
-export default function Sidebar({ currentPage, onPageChange, connectionStatus, onReconnect, isReconnecting }) {
+export default function Sidebar({ currentPage, onPageChange, connectionStatus, onReconnect, isReconnecting, reconnectAttempts = 0 }) {
   return (
     <Box 
       sx={{ 
@@ -110,6 +110,20 @@ export default function Sidebar({ currentPage, onPageChange, connectionStatus, o
           >
             Reconectar
           </Button>
+          {isReconnecting && reconnectAttempts > 0 && (
+            <Typography 
+              variant="caption" 
+              sx={{ 
+                mt: 1, 
+                display: 'block', 
+                textAlign: 'center',
+                color: '#94A3B8',
+                fontSize: '0.75rem',
+              }}
+            >
+              Tentativa automática {reconnectAttempts}/2
+            </Typography>
+          )}
         </Box>
       </Box>
 

@@ -46,11 +46,12 @@ export default function Dashboard({ isConnected = true, onReconnect }) {
         loadData(true) // Atualizar silenciosamente
       }, 10000) // Atualizar a cada 10s
     } else {
-      // Parar intervalo se desconectado
+      // Parar intervalo se desconectado e garantir que loading seja desativado
       if (intervalRef.current) {
         clearInterval(intervalRef.current)
         intervalRef.current = null
       }
+      setLoading(false) // Garantir que o loading seja desativado quando desconectado
     }
     
     return () => {
@@ -62,9 +63,12 @@ export default function Dashboard({ isConnected = true, onReconnect }) {
 
   const loadData = async (silent = false) => {
     // Não tentar carregar se não estiver conectado
-    if (!isConnected && !silent) {
-      setConnectionError(true)
-      return
+    if (!isConnected) {
+      if (!silent) {
+        setConnectionError(true)
+        setLoading(false) // Garantir que o loading seja desativado
+      }
+      return // Manter dados em cache, não limpar
     }
 
     try {
@@ -168,6 +172,9 @@ export default function Dashboard({ isConnected = true, onReconnect }) {
         }
       }
       
+      // Não limpar dados em caso de erro - manter cache
+      // setRobots([]) - removido para manter cache
+      
       if (!silent) {
         enqueueSnackbar(`Erro ao carregar dados: ${error.message}`, { variant: 'error' })
       }
@@ -246,7 +253,13 @@ export default function Dashboard({ isConnected = true, onReconnect }) {
         )}
       </Box>
 
-      {connectionError && !isConnected && (
+      {!isConnected && (robots.length > 0 || Object.values(stats).some(v => v > 0)) && (
+        <Alert severity="warning" sx={{ mb: 3 }}>
+          Você está desconectado. Os dados exibidos são do cache. Reconecte para atualizar.
+        </Alert>
+      )}
+      
+      {connectionError && !isConnected && robots.length === 0 && Object.values(stats).every(v => v === 0) && (
         <Alert severity="warning" sx={{ mb: 3 }}>
           Não foi possível carregar os dados. Verifique a conexão e clique em "Reconectar".
         </Alert>

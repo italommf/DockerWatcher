@@ -20,12 +20,13 @@ import {
   IconButton,
   Card,
   CardContent,
+  Alert,
 } from '@mui/material'
 import { Close as CloseIcon, Refresh as RefreshIcon, Visibility as VisibilityIcon } from '@mui/icons-material'
 import api from '../services/api'
 import { useSnackbar } from 'notistack'
 
-export default function Falhas() {
+export default function Falhas({ isConnected = true, onReconnect }) {
   const [failedPods, setFailedPods] = useState([])
   const [loading, setLoading] = useState(true)
   const [selectedPod, setSelectedPod] = useState(null)
@@ -36,12 +37,20 @@ export default function Falhas() {
   const { enqueueSnackbar } = useSnackbar()
 
   useEffect(() => {
-    loadFailedPods()
-    const interval = setInterval(loadFailedPods, 15000) // Atualizar a cada 15s
-    return () => clearInterval(interval)
-  }, [])
+    if (isConnected) {
+      loadFailedPods()
+      const interval = setInterval(() => {
+        if (isConnected) loadFailedPods()
+      }, 15000) // Atualizar a cada 15s
+      return () => clearInterval(interval)
+    } else {
+      setLoading(false)
+    }
+  }, [isConnected])
 
   const loadFailedPods = async () => {
+    if (!isConnected) return // Não tentar carregar se desconectado
+    
     try {
       setLoading(true)
       const allPods = await api.getPods()
@@ -68,8 +77,10 @@ export default function Falhas() {
       setFailedPods(failed)
     } catch (error) {
       console.error('Erro ao carregar pods falhados:', error)
-      enqueueSnackbar(`Erro ao carregar falhas: ${error.message}`, { variant: 'error' })
-      setFailedPods([])
+      // Não limpar failedPods em caso de erro - manter cache
+      if (isConnected) {
+        enqueueSnackbar(`Erro ao carregar falhas: ${error.message}`, { variant: 'error' })
+      }
     } finally {
       setLoading(false)
     }
@@ -150,15 +161,28 @@ export default function Falhas() {
         >
           Falhas em Containers
         </Typography>
-        <Button
-          variant="outlined"
-          startIcon={<RefreshIcon />}
-          onClick={loadFailedPods}
-          disabled={loading}
-        >
-          Atualizar
-        </Button>
+        <Box sx={{ display: 'flex', gap: 2 }}>
+          {!isConnected && onReconnect && (
+            <Button variant="outlined" onClick={onReconnect}>
+              Reconectar
+            </Button>
+          )}
+          <Button
+            variant="outlined"
+            startIcon={<RefreshIcon />}
+            onClick={loadFailedPods}
+            disabled={loading || !isConnected}
+          >
+            Atualizar
+          </Button>
+        </Box>
       </Box>
+
+      {!isConnected && failedPods.length > 0 && (
+        <Alert severity="warning" sx={{ mb: 3 }}>
+          Você está desconectado. Os dados exibidos são do cache. Reconecte para atualizar.
+        </Alert>
+      )}
 
       {loading && failedPods.length === 0 ? (
         <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '400px' }}>

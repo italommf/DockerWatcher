@@ -10,31 +10,42 @@ import {
   Switch,
   FormControlLabel,
   CircularProgress,
+  Alert,
 } from '@mui/material'
 import { Add, PlayArrow, Edit, Delete } from '@mui/icons-material'
 import api from '../services/api'
 import { useSnackbar } from 'notistack'
 
-export default function Cronjobs() {
+export default function Cronjobs({ isConnected = true, onReconnect }) {
   const [cronjobs, setCronjobs] = useState([])
   const [loading, setLoading] = useState(true)
   const { enqueueSnackbar } = useSnackbar()
 
   useEffect(() => {
-    loadCronjobs()
-    const interval = setInterval(loadCronjobs, 10000)
-    return () => clearInterval(interval)
-  }, [])
+    if (isConnected) {
+      loadCronjobs()
+      const interval = setInterval(() => {
+        if (isConnected) loadCronjobs()
+      }, 10000)
+      return () => clearInterval(interval)
+    } else {
+      setLoading(false)
+    }
+  }, [isConnected])
 
   const loadCronjobs = async () => {
+    if (!isConnected) return // Não tentar carregar se desconectado
+    
     try {
       setLoading(true)
       const data = await api.getCronjobs()
       setCronjobs(Array.isArray(data) ? data : [])
     } catch (error) {
       console.error('Erro ao carregar cronjobs:', error)
-      enqueueSnackbar(`Erro ao carregar cronjobs: ${error.message}`, { variant: 'error' })
-      setCronjobs([])
+      // Não limpar cronjobs em caso de erro - manter cache
+      if (isConnected) {
+        enqueueSnackbar(`Erro ao carregar cronjobs: ${error.message}`, { variant: 'error' })
+      }
     } finally {
       setLoading(false)
     }
@@ -105,10 +116,24 @@ export default function Cronjobs() {
         >
           Cronjobs
         </Typography>
-        <Button variant="contained" startIcon={<Add />} onClick={handleAdd}>
-          Adicionar Cronjob
-        </Button>
+        <Box sx={{ display: 'flex', gap: 2 }}>
+          {!isConnected && onReconnect && (
+            <Button variant="outlined" onClick={onReconnect}>
+              Reconectar
+            </Button>
+          )}
+          <Button variant="contained" startIcon={<Add />} onClick={handleAdd} disabled={!isConnected}>
+            Adicionar Cronjob
+          </Button>
+        </Box>
       </Box>
+
+      {!isConnected && cronjobs.length > 0 && (
+        <Alert severity="warning" sx={{ mb: 3 }}>
+          Você está desconectado. Os dados exibidos são do cache. Reconecte para atualizar.
+        </Alert>
+      )}
+
       <Grid container spacing={3}>
         {cronjobs.length === 0 ? (
           <Grid item xs={12}>

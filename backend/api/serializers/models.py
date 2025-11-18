@@ -32,6 +32,8 @@ class RPASerializer(serializers.Serializer):
     status = serializers.CharField()  # 'active' ou 'standby'
     execucoes_pendentes = serializers.IntegerField(required=False)
     jobs_ativos = serializers.IntegerField(required=False)
+    apelido = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    tags = serializers.ListField(child=serializers.CharField(), required=False, allow_null=True)
 
 class CreateRPASerializer(serializers.Serializer):
     nome_rpa = serializers.CharField()
@@ -40,6 +42,8 @@ class CreateRPASerializer(serializers.Serializer):
     qtd_ram_maxima = serializers.IntegerField()
     utiliza_arquivos_externos = serializers.BooleanField(default=False)
     tempo_maximo_de_vida = serializers.IntegerField(default=600)
+    apelido = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    tags = serializers.ListField(child=serializers.CharField(), required=False, allow_null=True)
 
 class UpdateRPASerializer(serializers.Serializer):
     docker_tag = serializers.CharField(required=False)
@@ -47,19 +51,32 @@ class UpdateRPASerializer(serializers.Serializer):
     qtd_ram_maxima = serializers.IntegerField(required=False)
     utiliza_arquivos_externos = serializers.BooleanField(required=False)
     tempo_maximo_de_vida = serializers.IntegerField(required=False)
+    apelido = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    tags = serializers.ListField(child=serializers.CharField(), required=False, allow_null=True)
 
 class CronjobSerializer(serializers.Serializer):
     name = serializers.CharField()
     namespace = serializers.CharField()
     schedule = serializers.CharField()
     suspended = serializers.BooleanField()
+    dependente_de_execucoes = serializers.BooleanField(required=False, default=True)
+    execucoes_pendentes = serializers.IntegerField(required=False)
     last_schedule_time = serializers.CharField(required=False, allow_null=True)
     last_successful_time = serializers.CharField(required=False, allow_null=True)
+    apelido = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    tags = serializers.ListField(child=serializers.CharField(), required=False, allow_null=True)
 
 class CreateCronjobSerializer(serializers.Serializer):
     name = serializers.CharField()
     schedule = serializers.CharField()
-    yaml_content = serializers.CharField()
+    timezone = serializers.CharField(default='America/Sao_Paulo')
+    nome_robo = serializers.CharField()
+    docker_image = serializers.CharField()
+    memory_limit = serializers.CharField(default='256Mi')
+    ttl_seconds_after_finished = serializers.IntegerField(default=60, required=False)
+    dependente_de_execucoes = serializers.BooleanField(default=True)
+    apelido = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    tags = serializers.ListField(child=serializers.CharField(), required=False, allow_null=True)
 
 class DeploymentSerializer(serializers.Serializer):
     name = serializers.CharField()
@@ -67,10 +84,20 @@ class DeploymentSerializer(serializers.Serializer):
     replicas = serializers.IntegerField()
     ready_replicas = serializers.IntegerField()
     available_replicas = serializers.IntegerField()
+    dependente_de_execucoes = serializers.BooleanField(required=False, default=True)
+    execucoes_pendentes = serializers.IntegerField(required=False)
+    apelido = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    tags = serializers.ListField(child=serializers.CharField(), required=False, allow_null=True)
 
 class CreateDeploymentSerializer(serializers.Serializer):
     name = serializers.CharField()
-    yaml_content = serializers.CharField()
+    replicas = serializers.IntegerField(default=1)
+    nome_robo = serializers.CharField()
+    docker_image = serializers.CharField()
+    memory_limit = serializers.CharField(default='256Mi')
+    dependente_de_execucoes = serializers.BooleanField(default=True)
+    apelido = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    tags = serializers.ListField(child=serializers.CharField(), required=False, allow_null=True)
 
 class ExecutionSerializer(serializers.Serializer):
     id = serializers.IntegerField()

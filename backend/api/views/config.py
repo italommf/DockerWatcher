@@ -12,30 +12,78 @@ logger = logging.getLogger(__name__)
 def get_config(request):
     """Retorna as configurações atuais."""
     try:
+        config_path = get_config_path()
+        
+        # Se o arquivo não existir, retornar configurações vazias
+        if not os.path.exists(config_path):
+            logger.info(f"Arquivo de configuração não encontrado: {config_path}. Retornando configurações vazias.")
+            return Response({
+                'ssh': {
+                    'host': '',
+                    'port': 22,
+                    'username': '',
+                    'use_key': False,
+                    'key_path': '',
+                    'password': '',
+                },
+                'mysql': {
+                    'host': '',
+                    'port': 3306,
+                    'user': '',
+                    'password': '',
+                    'database': '',
+                },
+            }, status=status.HTTP_200_OK)
+        
         ssh_config = get_ssh_config()
         mysql_config = get_mysql_config()
         
-        # Remover senha e chave do retorno por segurança
+        # Retornar indicador se senha existe (mas não a senha em si)
+        ssh_password = ssh_config.get('password', '')
+        mysql_password = mysql_config.get('password', '')
+        
         ssh_config_safe = {
             'host': ssh_config.get('host', ''),
             'port': ssh_config.get('port', 22),
             'username': ssh_config.get('username', ''),
             'use_key': ssh_config.get('use_key', False),
             'key_path': ssh_config.get('key_path', ''),
-            'password': '',  # Não retornar senha
+            'password': 'secret' if ssh_password else '',  # Indicar se senha existe
+            'has_password': bool(ssh_password),  # Flag adicional para indicar presença
         }
         
         mysql_config_safe = {
             'host': mysql_config.get('host', ''),
             'port': mysql_config.get('port', 3306),
             'user': mysql_config.get('user', ''),
-            'password': '',  # Não retornar senha
+            'password': 'secret' if mysql_password else '',  # Indicar se senha existe
+            'has_password': bool(mysql_password),  # Flag adicional para indicar presença
             'database': mysql_config.get('database', ''),
         }
         
         return Response({
             'ssh': ssh_config_safe,
             'mysql': mysql_config_safe,
+        }, status=status.HTTP_200_OK)
+    except FileNotFoundError as e:
+        logger.warning(f"Arquivo de configuração não encontrado: {e}")
+        # Retornar configurações vazias ao invés de erro
+        return Response({
+            'ssh': {
+                'host': '',
+                'port': 22,
+                'username': '',
+                'use_key': False,
+                'key_path': '',
+                'password': '',
+            },
+            'mysql': {
+                'host': '',
+                'port': 3306,
+                'user': '',
+                'password': '',
+                'database': '',
+            },
         }, status=status.HTTP_200_OK)
     except Exception as e:
         logger.error(f"Erro ao obter configurações: {e}")
@@ -80,8 +128,8 @@ def save_config(request):
                 config.set('SSH', 'use_key', str(ssh_data['use_key']).lower())
             if 'key_path' in ssh_data:
                 config.set('SSH', 'key_path', str(ssh_data['key_path']))
-            if 'password' in ssh_data and ssh_data['password']:
-                # Só atualizar senha se foi fornecida (não vazia)
+            if 'password' in ssh_data and ssh_data['password'] and ssh_data['password'] != 'secret':
+                # Só atualizar senha se foi fornecida (não vazia e não é o placeholder "secret")
                 config.set('SSH', 'password', str(ssh_data['password']))
         
         # Atualizar configurações MySQL
@@ -93,8 +141,8 @@ def save_config(request):
                 config.set('MySQL', 'port', str(mysql_data['port']))
             if 'user' in mysql_data:
                 config.set('MySQL', 'user', str(mysql_data['user']))
-            if 'password' in mysql_data and mysql_data['password']:
-                # Só atualizar senha se foi fornecida (não vazia)
+            if 'password' in mysql_data and mysql_data['password'] and mysql_data['password'] != 'secret':
+                # Só atualizar senha se foi fornecida (não vazia e não é o placeholder "secret")
                 config.set('MySQL', 'password', str(mysql_data['password']))
             if 'database' in mysql_data:
                 config.set('MySQL', 'database', str(mysql_data['database']))
@@ -111,18 +159,25 @@ def save_config(request):
             ssh_config_updated = get_ssh_config()
             mysql_config_updated = get_mysql_config()
             
+            ssh_password_updated = ssh_config_updated.get('password', '')
+            mysql_password_updated = mysql_config_updated.get('password', '')
+            
             ssh_safe = {
                 'host': ssh_config_updated.get('host', ''),
                 'port': ssh_config_updated.get('port', 22),
                 'username': ssh_config_updated.get('username', ''),
                 'use_key': ssh_config_updated.get('use_key', False),
                 'key_path': ssh_config_updated.get('key_path', ''),
+                'password': 'secret' if ssh_password_updated else '',
+                'has_password': bool(ssh_password_updated),
             }
             
             mysql_safe = {
                 'host': mysql_config_updated.get('host', ''),
                 'port': mysql_config_updated.get('port', 3306),
                 'user': mysql_config_updated.get('user', ''),
+                'password': 'secret' if mysql_password_updated else '',
+                'has_password': bool(mysql_password_updated),
                 'database': mysql_config_updated.get('database', ''),
             }
             

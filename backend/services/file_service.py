@@ -11,8 +11,13 @@ logger = logging.getLogger(__name__)
 class FileService:
     """Serviço para gerenciar arquivos remotos via SFTP."""
     
-    def __init__(self):
-        self.ssh_service = SSHService()
+    def __init__(self, ssh_service=None):
+        # Permitir injetar ssh_service para reutilização (usado pelo service_manager)
+        if ssh_service is None:
+            from backend.services.service_manager import get_ssh_service
+            self.ssh_service = get_ssh_service()
+        else:
+            self.ssh_service = ssh_service
         self.paths_config = get_paths_config()
     
     @property
@@ -24,11 +29,20 @@ class FileService:
         """
         Obtém lista de caminhos de arquivos JSON de RPA no servidor remoto.
         Retorna apenas arquivos ativos (não em standby).
+        Se o diretório não existir, retorna lista vazia (sem erro).
         """
-        rpa_config_path = self.paths_config['rpa_config_path']
+        rpa_config_path = self.paths_config.get('rpa_config_path', '')
+        if not rpa_config_path:
+            return []
+        
         arquivos = []
         
         try:
+            # Verificar se o diretório existe antes de listar
+            if not self.ssh_service.file_exists(rpa_config_path):
+                # Diretório não existe - retornar vazio sem erro
+                return []
+            
             files = self.ssh_service.list_files(rpa_config_path)
             
             for arquivo in files:
@@ -40,13 +54,20 @@ class FileService:
                         arquivos.append(caminho_completo)
             
             return arquivos
+        except FileNotFoundError:
+            # Diretório não existe - retornar vazio sem erro
+            return []
         except Exception as e:
-            logger.error(f"Erro ao listar RPAs: {e}")
+            # Outros erros - logar mas não quebrar
+            logger.debug(f"Diretório não existe ou erro ao listar RPAs: {e}")
             return []
     
     def obter_json_rpas_standby(self) -> List[str]:
-        """Obtém lista de RPAs em standby."""
-        rpa_config_path = self.paths_config['rpa_config_path']
+        """Obtém lista de RPAs em standby. Retorna vazio se diretório não existir (sem erro)."""
+        rpa_config_path = self.paths_config.get('rpa_config_path', '')
+        if not rpa_config_path:
+            return []
+        
         standby_path = f"{rpa_config_path}/standby"
         arquivos = []
         
@@ -60,8 +81,12 @@ class FileService:
                         arquivos.append(caminho_completo)
             
             return arquivos
+        except FileNotFoundError:
+            # Diretório não existe - retornar vazio sem erro
+            return []
         except Exception as e:
-            logger.error(f"Erro ao listar RPAs em standby: {e}")
+            # Outros erros - logar mas não quebrar
+            logger.debug(f"Diretório não existe ou erro ao listar RPAs em standby: {e}")
             return []
     
     def ler_json_rpa(self, caminho: str) -> Optional[Dict]:
@@ -155,11 +180,19 @@ class FileService:
             return False
     
     def obter_yaml_cronjobs(self) -> List[str]:
-        """Obtém lista de arquivos YAML de cronjobs no servidor remoto."""
-        cronjobs_path = self.paths_config['cronjobs_path']
+        """Obtém lista de arquivos YAML de cronjobs no servidor remoto. Retorna vazio se diretório não existir (sem erro)."""
+        cronjobs_path = self.paths_config.get('cronjobs_path', '')
+        if not cronjobs_path:
+            return []
+        
         arquivos = []
         
         try:
+            # Verificar se o diretório existe antes de listar
+            if not self.ssh_service.file_exists(cronjobs_path):
+                # Diretório não existe - retornar vazio sem erro
+                return []
+            
             files = self.ssh_service.list_files(cronjobs_path)
             
             for arquivo in files:
@@ -170,8 +203,12 @@ class FileService:
                         arquivos.append(caminho_completo)
             
             return arquivos
+        except FileNotFoundError:
+            # Diretório não existe - retornar vazio sem erro
+            return []
         except Exception as e:
-            logger.error(f"Erro ao listar cronjobs: {e}")
+            # Outros erros - logar mas não quebrar
+            logger.debug(f"Diretório não existe ou erro ao listar cronjobs: {e}")
             return []
     
     def obter_yaml_cronjobs_standby(self) -> List[str]:
@@ -223,11 +260,19 @@ class FileService:
             return False
     
     def obter_yaml_deployments(self) -> List[str]:
-        """Obtém lista de arquivos YAML de deployments no servidor remoto."""
-        deployments_path = self.paths_config['deployments_path']
+        """Obtém lista de arquivos YAML de deployments no servidor remoto. Retorna vazio se diretório não existir (sem erro)."""
+        deployments_path = self.paths_config.get('deployments_path', '')
+        if not deployments_path:
+            return []
+        
         arquivos = []
         
         try:
+            # Verificar se o diretório existe antes de listar
+            if not self.ssh_service.file_exists(deployments_path):
+                # Diretório não existe - retornar vazio sem erro
+                return []
+            
             files = self.ssh_service.list_files(deployments_path)
             
             for arquivo in files:
@@ -238,8 +283,12 @@ class FileService:
                         arquivos.append(caminho_completo)
             
             return arquivos
+        except FileNotFoundError:
+            # Diretório não existe - retornar vazio sem erro
+            return []
         except Exception as e:
-            logger.error(f"Erro ao listar deployments: {e}")
+            # Outros erros - logar mas não quebrar
+            logger.debug(f"Diretório não existe ou erro ao listar deployments: {e}")
             return []
     
     def ler_yaml_deployment(self, caminho: str) -> Optional[Dict]:
@@ -264,5 +313,50 @@ class FileService:
             return True
         except Exception as e:
             logger.error(f"Erro ao escrever YAML deployment {arquivo_path}: {e}")
+            return False
+
+    def _obter_metadata_path(self, tipo: str, nome: str) -> str:
+        """Obtém o caminho do arquivo de metadados."""
+        base_path = self.paths_config.get('metadata_path', self.paths_config.get('rpa_config_path', ''))
+        return f"{base_path}/metadata_{tipo}_{nome}.json"
+    
+    def ler_metadata(self, tipo: str, nome: str) -> Optional[Dict]:
+        """Lê metadados (apelido e tags) de um recurso."""
+        metadata_path = self._obter_metadata_path(tipo, nome)
+        try:
+            if self.ssh_service.file_exists(metadata_path):
+                content = self.ssh_service.get_file(metadata_path)
+                if content:
+                    return json.loads(content.decode('utf-8'))
+            return None
+        except Exception as e:
+            logger.error(f"Erro ao ler metadados {metadata_path}: {e}")
+            return None
+    
+    def escrever_metadata(self, tipo: str, nome: str, apelido: Optional[str] = None, tags: Optional[List[str]] = None) -> bool:
+        """Escreve metadados (apelido e tags) de um recurso."""
+        metadata_path = self._obter_metadata_path(tipo, nome)
+        try:
+            metadata = {
+                'apelido': apelido or '',
+                'tags': tags or []
+            }
+            content = json.dumps(metadata, indent=2, ensure_ascii=False)
+            self.ssh_service.put_file(None, metadata_path, content.encode('utf-8'))
+            return True
+        except Exception as e:
+            logger.error(f"Erro ao escrever metadados {metadata_path}: {e}")
+            return False
+    
+    def deletar_metadata(self, tipo: str, nome: str) -> bool:
+        """Deleta arquivo de metadados."""
+        metadata_path = self._obter_metadata_path(tipo, nome)
+        try:
+            if self.ssh_service.file_exists(metadata_path):
+                self.ssh_service.execute_command(f"rm {metadata_path}")
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"Erro ao deletar metadados {metadata_path}: {e}")
             return False
 

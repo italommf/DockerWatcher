@@ -1,7 +1,7 @@
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from backend.services.kubernetes_service import KubernetesService
+from backend.services.service_manager import get_kubernetes_service
 from api.serializers.models import PodSerializer, PodLogsSerializer
 import logging
 
@@ -12,7 +12,8 @@ class PodViewSet(viewsets.ViewSet):
     
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.k8s_service = KubernetesService()
+        # Usar serviços singleton para evitar reconexões constantes
+        self.k8s_service = get_kubernetes_service()
     
     def list(self, request):
         """Lista todos os pods."""

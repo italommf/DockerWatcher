@@ -1,35 +1,10 @@
-const { app, BrowserWindow, ipcMain } = require('electron')
+const { app, BrowserWindow } = require('electron')
 const path = require('path')
-const { spawn } = require('child_process')
 
 // Detectar se está em modo desenvolvimento
 const isDev = !app.isPackaged || process.env.NODE_ENV === 'development'
 
 let mainWindow = null
-let backendProcess = null
-
-// Função para iniciar o backend Django
-function startBackend() {
-  const backendPath = path.join(__dirname, '..', '..', 'backend')
-  const isWindows = process.platform === 'win32'
-  const pythonCommand = isWindows ? 'python' : 'python3'
-  
-  console.log('Iniciando backend Django...')
-  
-  backendProcess = spawn(pythonCommand, ['run_server.py'], {
-    cwd: backendPath,
-    stdio: 'inherit',
-    shell: isWindows,
-  })
-
-  backendProcess.on('error', (error) => {
-    console.error('Erro ao iniciar backend:', error)
-  })
-
-  backendProcess.on('exit', (code) => {
-    console.log(`Backend finalizado com código ${code}`)
-  })
-}
 
 // Função para verificar se o servidor está pronto
 function waitForServer(url, maxAttempts = 60, delay = 500) {
@@ -178,10 +153,9 @@ function createWindow() {
 
 // Aguardar até que o app esteja pronto
 app.whenReady().then(() => {
-  // Iniciar backend Django
-  startBackend()
-
-  // Criar janela imediatamente (ela esperará o React estar pronto)
+  // Não iniciar backend aqui - deve ser iniciado manualmente
+  console.log('🚀 Iniciando frontend...')
+  console.log('⚠️  Backend deve ser iniciado manualmente: python backend/run_server.py')
   createWindow()
 
   app.on('activate', () => {
@@ -192,20 +166,8 @@ app.whenReady().then(() => {
 })
 
 app.on('window-all-closed', () => {
-  // Encerrar backend ao fechar a aplicação
-  if (backendProcess) {
-    backendProcess.kill()
-  }
-
   if (process.platform !== 'darwin') {
     app.quit()
-  }
-})
-
-app.on('before-quit', () => {
-  // Encerrar backend antes de sair
-  if (backendProcess) {
-    backendProcess.kill()
   }
 })
 

@@ -4,6 +4,7 @@ import CssBaseline from '@mui/material/CssBaseline'
 import { Box } from '@mui/material'
 import { SnackbarProvider } from 'notistack'
 import { AppLogsProvider } from './context/AppLogsContext'
+import { DashboardCacheProvider } from './context/DashboardCacheContext'
 import Layout from './components/Layout/Layout'
 
 const theme = createTheme({
@@ -88,17 +89,19 @@ function App() {
         preventDuplicate={true}
       >
         <AppLogsProvider>
-          <Box 
-            sx={{ 
-              width: '100vw', 
-              height: '100vh', 
-              overflow: 'hidden',
-              position: 'relative',
-              bgcolor: 'background.default',
-            }}
-          >
-            <Layout />
-          </Box>
+          <DashboardCacheProvider>
+            <Box 
+              sx={{ 
+                width: '100vw', 
+                height: '100vh', 
+                overflow: 'hidden',
+                position: 'relative',
+                bgcolor: 'background.default',
+              }}
+            >
+              <Layout />
+            </Box>
+          </DashboardCacheProvider>
         </AppLogsProvider>
       </SnackbarProvider>
     </ThemeProvider>

@@ -17,145 +17,652 @@ import {
   Button,
   Alert,
 } from '@mui/material'
-import { Refresh as RefreshIcon } from '@mui/icons-material'
+import { 
+  Refresh as RefreshIcon,
+  AccessTime as AccessTimeIcon,
+  SmartToy as SmartToyIcon,
+  AllInclusive as AllInclusiveIcon,
+  PlayArrow as PlayArrowIcon
+} from '@mui/icons-material'
 import api from '../services/api'
 import { useSnackbar } from 'notistack'
+import { useDashboardCache } from '../context/DashboardCacheContext'
+
+// Função para calcular próxima execução baseada no cron schedule
+function calcularProximaExecucao(schedule) {
+  if (!schedule) return null
+  
+  try {
+    // Parsear cron expression (formato: minuto hora dia mês dia-da-semana)
+    // Exemplo: "0 18 1 * *" = todo dia 1 às 18:00
+    const parts = schedule.trim().split(/\s+/)
+    if (parts.length < 5) return null
+    
+    const now = new Date()
+    const [minuto, hora, dia, mes, diaSemana] = parts
+    
+    // Criar data para próxima execução (começar de hoje)
+    let proxima = new Date(now)
+    proxima.setSeconds(0)
+    proxima.setMilliseconds(0)
+    
+    // Se minuto e hora são específicos
+    if (minuto !== '*' && hora !== '*') {
+      const minutoInt = parseInt(minuto) || 0
+      const horaInt = parseInt(hora) || 0
+      
+      proxima.setMinutes(minutoInt)
+      proxima.setHours(horaInt)
+      
+      // Se já passou hoje, tentar amanhã
+      if (proxima <= now) {
+        proxima.setDate(proxima.getDate() + 1)
+      }
+      
+      // Se dia do mês é específico
+      if (dia !== '*') {
+        const diaMes = parseInt(dia)
+        if (!isNaN(diaMes)) {
+          // Ajustar para o dia específico do mês
+          const hoje = now.getDate()
+          if (diaMes >= hoje) {
+            // Se o dia ainda não passou este mês
+            proxima.setDate(diaMes)
+            if (proxima <= now) {
+              // Se já passou, ir para o próximo mês
+              proxima.setMonth(proxima.getMonth() + 1)
+              // Ajustar para o dia correto (pode precisar ajustar se o mês não tem esse dia)
+              const ultimoDiaMes = new Date(proxima.getFullYear(), proxima.getMonth() + 1, 0).getDate()
+              proxima.setDate(Math.min(diaMes, ultimoDiaMes))
+            }
+          } else {
+            // Se o dia já passou, ir para o próximo mês
+            proxima.setMonth(proxima.getMonth() + 1)
+            const ultimoDiaMes = new Date(proxima.getFullYear(), proxima.getMonth() + 1, 0).getDate()
+            proxima.setDate(Math.min(diaMes, ultimoDiaMes))
+            proxima.setHours(horaInt)
+            proxima.setMinutes(minutoInt)
+          }
+        }
+      }
+      
+      // Verificar se ainda está no passado (caso de ajustes de mês)
+      if (proxima <= now) {
+        // Se ainda está no passado, adicionar mais um dia
+        proxima.setDate(proxima.getDate() + 1)
+      }
+    } else {
+      // Para schedules mais complexos ou com wildcards, usar uma aproximação
+      // Adicionar 1 hora como fallback
+      proxima = new Date(now.getTime() + 60 * 60 * 1000)
+    }
+    
+    return proxima
+  } catch (e) {
+    console.error('Erro ao calcular próxima execução:', e, schedule)
+    return null
+  }
+}
+
+// Função para formatar contagem regressiva
+function formatarContagemRegressiva(dataFutura) {
+  if (!dataFutura) return 'N/A'
+  
+  const agora = new Date()
+  const diff = dataFutura.getTime() - agora.getTime()
+  
+  if (diff <= 0) return 'Agora'
+  
+  const dias = Math.floor(diff / (1000 * 60 * 60 * 24))
+  const horas = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60))
+  const minutos = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60))
+  
+  const partes = []
+  if (dias > 0) partes.push(`${dias} ${dias === 1 ? 'dia' : 'dias'}`)
+  if (horas > 0) partes.push(`${horas} ${horas === 1 ? 'hora' : 'horas'}`)
+  if (minutos > 0) partes.push(`${minutos} ${minutos === 1 ? 'minuto' : 'minutos'}`)
+  
+  if (partes.length === 0) return 'Menos de 1 minuto'
+  
+  if (partes.length === 1) return partes[0]
+  if (partes.length === 2) return `${partes[0]} e ${partes[1]}`
+  return `${partes[0]}, ${partes[1]} e ${partes[2]}`
+}
+
+// Função para formatar nome: substituir - e _ por espaços e capitalizar palavras
+function formatarNome(nome) {
+  if (!nome) return nome
+  // Substituir hífens e underscores por espaços
+  let formatado = nome.replace(/[-_]/g, ' ')
+  // Capitalizar primeira letra de cada palavra
+  formatado = formatado.split(' ')
+    .map(palavra => palavra.charAt(0).toUpperCase() + palavra.slice(1).toLowerCase())
+    .join(' ')
+  
+  // Remover "RPA" e "CRONJOB"/"CONJOB" se forem as duas primeiras palavras
+  const palavras = formatado.split(' ')
+  if (palavras.length >= 2) {
+    const primeira = palavras[0].toLowerCase()
+    const segunda = palavras[1].toLowerCase()
+    
+    if ((primeira === 'rpa' && (segunda === 'cronjob' || segunda === 'conjob')) || 
+        ((primeira === 'cronjob' || primeira === 'conjob') && segunda === 'rpa')) {
+      // Remover as duas primeiras palavras
+      palavras.splice(0, 2)
+      formatado = palavras.join(' ').trim()
+    }
+  }
+  
+  return formatado
+}
+
+// Componente de contagem regressiva
+function ContagemRegressiva({ dataFutura }) {
+  const [tempoRestante, setTempoRestante] = useState(formatarContagemRegressiva(dataFutura))
+  
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setTempoRestante(formatarContagemRegressiva(dataFutura))
+    }, 60000) // Atualizar a cada minuto
+    
+    return () => clearInterval(interval)
+  }, [dataFutura])
+  
+  return <span>{tempoRestante}</span>
+}
+
+// Componente de gráfico de linha com área preenchida
+function LineChart({ title, data, maxValue, unit = 'GB' }) {
+  const [hoveredPoint, setHoveredPoint] = useState(null)
+  const [tooltipPosition, setTooltipPosition] = useState({ x: 0, y: 0 })
+  const width = 800
+  const height = 180
+  const padding = 30
+  
+  if (!data || data.length === 0) {
+    return (
+      <Card sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+        <CardContent sx={{ flex: 1, display: 'flex', flexDirection: 'column', p: 1.5 }}>
+          <Typography variant="subtitle2" gutterBottom sx={{ color: '#F8FAFC', fontSize: '0.875rem', mb: 1 }}>
+            {title}
+          </Typography>
+          <Box sx={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <Typography variant="body2" sx={{ color: '#CBD5E1', fontSize: '0.75rem' }}>
+              Aguardando dados...
+            </Typography>
+          </Box>
+        </CardContent>
+      </Card>
+    )
+  }
+  
+  const chartWidth = width - padding * 2
+  const chartHeight = height - padding * 2
+  
+  // Normalizar dados para o gráfico
+  // O gráfico mostra a porcentagem de recurso usado (0% na base, 100% no topo)
+  const normalizedData = data.map((point, index) => {
+    const divisor = data.length > 1 ? data.length - 1 : 1
+    const x = padding + (index / divisor) * chartWidth
+    
+    // Calcular porcentagem de recurso usado (0 a 100%)
+    const porcentagemUsado = maxValue > 0 
+      ? Math.max(0, Math.min(100, ((point.usado || 0) / maxValue) * 100))
+      : 0
+    
+    // Converter porcentagem para posição Y (0% na base, 100% no topo)
+    // y = padding + chartHeight quando porcentagem = 0%
+    // y = padding quando porcentagem = 100%
+    const y = padding + chartHeight - (porcentagemUsado / 100) * chartHeight
+    
+    return { 
+      x, 
+      y, 
+      value: point.usado || 0,
+      livre: point.livre || 0,
+      porcentagemUsado,
+      originalData: point
+    }
+  })
+  
+  // Calcular posições Y para as linhas de limite (80% e 90%)
+  const y80 = padding + chartHeight - (80 / 100) * chartHeight
+  const y90 = padding + chartHeight - (90 / 100) * chartHeight
+  
+  // Função para determinar a cor baseada na porcentagem de uso
+  const getColorForPercentage = (percentage) => {
+    if (percentage === undefined || percentage === null || isNaN(percentage)) {
+      return '#10B981' // Verde padrão
+    }
+    if (percentage >= 90) return '#EF4444' // Vermelho
+    if (percentage >= 80) return '#F59E0B' // Amarelo
+    return '#10B981' // Verde
+  }
+  
+  // Função para determinar o limite Y baseado na porcentagem
+  const getLimitYForPercentage = (percentage) => {
+    if (percentage >= 90) return y90 // Vermelho: até linha de 90%
+    if (percentage >= 80) return y80 // Amarelo: até linha de 80%
+    return padding + chartHeight // Verde: até a base
+  }
+  
+  // Função para criar curvas suaves (parábolas) entre pontos
+  // Os pontos serão os máximos/mínimos das curvas
+  const createSmoothPath = (points) => {
+    if (points.length === 0) return ''
+    if (points.length === 1) {
+      return `M ${points[0].x} ${points[0].y}`
+    }
+    
+    // Sempre usar curvas, mesmo com apenas 2 pontos
+    let path = `M ${points[0].x} ${points[0].y}`
+    
+    for (let i = 0; i < points.length - 1; i++) {
+      const p1 = points[i]
+      const p2 = points[i + 1]
+      
+      // Calcular pontos de controle para criar curvas suaves
+      // que passem por p1 e p2 como extremos
+      const dx = p2.x - p1.x
+      const dy = p2.y - p1.y
+      
+      // Calcular pontos de controle para criar curvas suaves
+      // Para que os pontos sejam extremos, usar uma abordagem diferente:
+      // criar curvas que naturalmente passem pelos pontos como máximos/mínimos
+      
+      if (points.length === 2) {
+        // Apenas 2 pontos: criar uma curva suave usando ponto médio como controle
+        const midX = (p1.x + p2.x) / 2
+        // Usar o ponto médio como ponto de controle para criar uma parábola
+        // onde p1 e p2 são os extremos
+        const controlY = Math.min(p1.y, p2.y) - Math.abs(dy) * 0.5
+        path += ` Q ${midX} ${controlY}, ${p2.x} ${p2.y}`
+        continue
+      }
+      
+      // Para 3 ou mais pontos, usar curvas cúbicas
+      let cp1x, cp1y, cp2x, cp2y
+      const curveFactor = 0.5
+      
+      if (i === 0) {
+        // Primeira curva
+        const p3 = points[i + 2] || p2
+        const nextDx = (p3.x - p2.x) || dx
+        cp1x = p1.x + dx * curveFactor
+        // Ajustar Y para criar curva visível, mas manter p1 como extremo
+        cp1y = p1.y + dy * 0.3
+        cp2x = p2.x - nextDx * curveFactor
+        cp2y = p2.y - dy * 0.3
+      } else if (i === points.length - 2) {
+        // Última curva
+        const p0 = points[i - 1]
+        const prevDx = p1.x - p0.x
+        const prevDy = p1.y - p0.y
+        cp1x = p1.x + prevDx * curveFactor
+        cp1y = p1.y + prevDy * 0.3
+        cp2x = p2.x - dx * curveFactor
+        cp2y = p2.y - dy * 0.3
+      } else {
+        // Curvas intermediárias
+        const p0 = points[i - 1]
+        const p3 = points[i + 2]
+        const prevDx = p1.x - p0.x
+        const prevDy = p1.y - p0.y
+        const nextDx = p3.x - p2.x
+        const nextDy = p3.y - p2.y
+        
+        // Calcular pontos de controle que criem curvas suaves
+        // mas garantam que p1 e p2 sejam extremos
+        cp1x = p1.x + prevDx * curveFactor
+        cp1y = p1.y + prevDy * 0.3
+        
+        cp2x = p2.x - nextDx * curveFactor
+        cp2y = p2.y - nextDy * 0.3
+      }
+      
+      path += ` C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${p2.x} ${p2.y}`
+    }
+    
+    return path
+  }
+  
+  return (
+    <Card sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+      <CardContent sx={{ flex: 1, display: 'flex', flexDirection: 'column', p: 1.5 }}>
+        <Typography variant="subtitle2" gutterBottom sx={{ color: '#F8FAFC', fontSize: '0.875rem', mb: 1 }}>
+          {title}
+        </Typography>
+        <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'stretch', justifyContent: 'center', position: 'relative', minHeight: height }}>
+          {/* Label 100% no topo */}
+          {normalizedData.length > 0 && (
+            <Typography
+              sx={{
+                position: 'absolute',
+                top: -4,
+                left: 0,
+                color: '#CBD5E1',
+                fontSize: '1rem',
+                fontWeight: 600,
+                zIndex: 10,
+                lineHeight: 1,
+              }}
+            >
+              {unit === '%' ? '100%' : maxValue.toFixed(2) + ' ' + unit}
+            </Typography>
+          )}
+          {normalizedData.length > 0 ? (
+            <Box 
+              sx={{ position: 'relative', width: '100%', height: '100%', minHeight: height, mt: 3, mb: 3 }}
+              onMouseMove={(e) => {
+                const rect = e.currentTarget.getBoundingClientRect()
+                const mouseX = e.clientX - rect.left
+                const mouseY = e.clientY - rect.top
+                
+                // Calcular qual ponto está mais próximo do mouse
+                const svgWidth = rect.width
+                const svgHeight = rect.height
+                const chartWidth = svgWidth - padding * 2
+                const chartHeight = svgHeight - padding * 2
+                
+                // Converter coordenadas do mouse para coordenadas do gráfico
+                const graphX = ((mouseX - padding) / chartWidth) * (width - padding * 2)
+                const graphY = ((mouseY - padding) / chartHeight) * (height - padding * 2)
+                
+                // Encontrar o ponto mais próximo
+                let closestIndex = 0
+                let minDistance = Infinity
+                
+                normalizedData.forEach((point, index) => {
+                  const distance = Math.sqrt(
+                    Math.pow(point.x - graphX, 2) + Math.pow(point.y - graphY, 2)
+                  )
+                  if (distance < minDistance) {
+                    minDistance = distance
+                    closestIndex = index
+                  }
+                })
+                
+                // Se estiver próximo o suficiente (dentro da área do gráfico)
+                if (mouseX >= padding && mouseX <= svgWidth - padding && 
+                    mouseY >= padding && mouseY <= svgHeight - padding) {
+                  setHoveredPoint(closestIndex)
+                  setTooltipPosition({ x: mouseX, y: mouseY })
+                } else {
+                  setHoveredPoint(null)
+                }
+              }}
+              onMouseLeave={() => setHoveredPoint(null)}
+            >
+              <svg 
+                width="100%" 
+                height="100%" 
+                viewBox={`0 0 ${width} ${height}`}
+                preserveAspectRatio="none"
+                style={{ display: 'block' }}
+              >
+                {/* Linhas pontilhadas horizontais para marcar as zonas */}
+                <line
+                  x1={padding}
+                  y1={y80}
+                  x2={width - padding}
+                  y2={y80}
+                  stroke="#F59E0B"
+                  strokeWidth="1.5"
+                  strokeDasharray="4 4"
+                  opacity={0.7}
+                />
+                <line
+                  x1={padding}
+                  y1={y90}
+                  x2={width - padding}
+                  y2={y90}
+                  stroke="#EF4444"
+                  strokeWidth="1.5"
+                  strokeDasharray="4 4"
+                  opacity={0.7}
+                />
+                
+                {/* Área preenchida e linhas com cores baseadas na porcentagem */}
+                {normalizedData.length > 0 && (() => {
+                  // Criar segmentos baseados na cor de cada ponto
+                  const segments = []
+                  let currentSegment = {
+                    points: [],
+                    color: null,
+                    limitY: null
+                  }
+                  
+                  normalizedData.forEach((point, index) => {
+                    const color = getColorForPercentage(point.porcentagemUsado)
+                    const limitY = getLimitYForPercentage(point.porcentagemUsado)
+                    
+                    if (currentSegment.color === null) {
+                      currentSegment.color = color
+                      currentSegment.limitY = limitY
+                      currentSegment.points.push(point)
+                    } else if (currentSegment.color === color && currentSegment.limitY === limitY) {
+                      currentSegment.points.push(point)
+                    } else {
+                      // Mudou de cor/limite - finalizar segmento atual
+                      // Adicionar ponto de transição para conectar
+                      if (currentSegment.points.length > 0) {
+                        currentSegment.points.push(point) // Ponto de transição
+                        segments.push({ ...currentSegment })
+                        currentSegment.points.pop() // Remover para não duplicar
+                      }
+                      // Começar novo segmento com ponto de transição
+                      currentSegment = {
+                        points: index > 0 ? [normalizedData[index - 1], point] : [point],
+                        color: color,
+                        limitY: limitY
+                      }
+                    }
+                  })
+                  
+                  // Adicionar último segmento
+                  if (currentSegment.points.length > 0) {
+                    segments.push(currentSegment)
+                  }
+                  
+                  return (
+                    <>
+                      {/* Áreas preenchidas por segmento */}
+                      {segments.map((segment, segIndex) => {
+                        if (segment.points.length === 0) return null
+                        
+                        const linePathSeg = createSmoothPath(segment.points)
+                        const firstPoint = segment.points[0]
+                        const lastPoint = segment.points[segment.points.length - 1]
+                        
+                        // Área vai da linha até o limite correspondente
+                        const areaPath = `${linePathSeg} L ${lastPoint.x} ${segment.limitY} L ${firstPoint.x} ${segment.limitY} Z`
+                        
+                        return (
+                          <path
+                            key={`area-${segIndex}`}
+                            d={areaPath}
+                            fill={segment.color}
+                            fillOpacity={0.3}
+                          />
+                        )
+                      })}
+                      
+                      {/* Linhas por segmento */}
+                      {segments.map((segment, segIndex) => {
+                        if (segment.points.length === 0) return null
+                        
+                        const linePathSeg = createSmoothPath(segment.points)
+                        
+                        return (
+                          <path
+                            key={`line-${segIndex}`}
+                            d={linePathSeg}
+                            fill="none"
+                            stroke={segment.color}
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        )
+                      })}
+                      
+                      {/* Pontos com cores baseadas na porcentagem */}
+                      {normalizedData.map((point, index) => {
+                        if (!point || point.porcentagemUsado === undefined) return null
+                        const pointColor = getColorForPercentage(point.porcentagemUsado)
+                        return (
+                          <circle
+                            key={index}
+                            cx={point.x}
+                            cy={point.y}
+                            r="3"
+                            fill={pointColor}
+                          />
+                        )
+                      })}
+                    </>
+                  )
+                })()}
+                {/* Eixos */}
+                <line
+                  x1={padding}
+                  y1={padding + chartHeight}
+                  x2={width - padding}
+                  y2={padding + chartHeight}
+                  stroke="#CBD5E1"
+                  strokeWidth="1"
+                  opacity={0.5}
+                />
+                <line
+                  x1={padding}
+                  y1={padding}
+                  x2={padding}
+                  y2={padding + chartHeight}
+                  stroke="#CBD5E1"
+                  strokeWidth="1"
+                  opacity={0.5}
+                />
+                {/* Labels dos eixos - removidos do SVG para ficarem fora */}
+              </svg>
+              {/* Tooltip */}
+              {hoveredPoint !== null && normalizedData[hoveredPoint] && (
+                <Box
+                  sx={{
+                    position: 'absolute',
+                    top: tooltipPosition.y - 30,
+                    left: tooltipPosition.x,
+                    transform: 'translateX(-50%)',
+                    backgroundColor: 'rgba(15, 23, 42, 0.95)',
+                    color: '#F8FAFC',
+                    padding: '4px 8px',
+                    borderRadius: '4px',
+                    fontSize: '0.75rem',
+                    whiteSpace: 'nowrap',
+                    zIndex: 1000,
+                    border: '1px solid rgba(255, 255, 255, 0.1)',
+                    pointerEvents: 'none',
+                  }}
+                >
+                  {normalizedData[hoveredPoint].porcentagemUsado.toFixed(1)}%
+                </Box>
+              )}
+            </Box>
+          ) : (
+            <Typography variant="body2" sx={{ color: '#CBD5E1', fontSize: '0.75rem' }}>
+              Coletando dados...
+            </Typography>
+          )}
+          {/* Label 0% na base */}
+          {normalizedData.length > 0 && (
+            <Typography
+              sx={{
+                position: 'absolute',
+                bottom: -4,
+                left: 0,
+                color: '#CBD5E1',
+                fontSize: '1rem',
+                fontWeight: 600,
+                zIndex: 10,
+                lineHeight: 1,
+              }}
+            >
+              0{unit === '%' ? '%' : ' ' + unit}
+            </Typography>
+          )}
+        </Box>
+      </CardContent>
+    </Card>
+  )
+}
 
 export default function Dashboard({ isConnected = true, onReconnect }) {
-  const [stats, setStats] = useState({
-    containersAtivos: 0,
+  // Usar cache do contexto
+  const { cachedData, refreshData } = useDashboardCache()
+  
+  // Estados locais apenas para UI
+  const [loading, setLoading] = useState(false)
+  const [connectionError, setConnectionError] = useState(false)
+  
+  // Usar dados do cache
+  const stats = cachedData.stats
+  const robots = cachedData.robots
+  const cronjobs = cachedData.cronjobs
+  const vmResources = cachedData.vmResources || {
+    memoria: { total_gb: 0, livre_gb: 0, usada_gb: 0 },
+    armazenamento: { total_gb: 0, livre_gb: 0, usado_gb: 0 },
+    cpu: { usado: 0, livre: 100 }
+  }
+  const resourcesHistory = cachedData.resourcesHistory
+  
+  const countdownIntervalRef = useRef(null)
+  const { enqueueSnackbar } = useSnackbar()
+  // Manter referência aos valores anteriores para não mostrar "..." durante atualizações
+  const previousStatsRef = useRef({
+    instanciasAtivas: 0,
     execucoesPendentes: 0,
     falhasContainers: 0,
     rpasAtivos: 0,
     cronjobsAtivos: 0,
   })
-  const [robots, setRobots] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [connectionError, setConnectionError] = useState(false)
-  const intervalRef = useRef(null)
-  const { enqueueSnackbar } = useSnackbar()
+  
+  // Atualizar referência quando stats mudarem
+  useEffect(() => {
+    previousStatsRef.current = stats
+  }, [stats])
 
+  // Carregar dados iniciais quando conectar
   useEffect(() => {
     if (isConnected) {
-      loadData()
-      // Só iniciar intervalo se estiver conectado
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current)
-      }
-      intervalRef.current = setInterval(() => {
-        loadData(true) // Atualizar silenciosamente
-      }, 10000) // Atualizar a cada 10s
+      // Forçar atualização inicial ao conectar
+      refreshData(isConnected)
+      setLoading(false)
+      setConnectionError(false)
     } else {
-      // Parar intervalo se desconectado e garantir que loading seja desativado
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current)
-        intervalRef.current = null
-      }
-      setLoading(false) // Garantir que o loading seja desativado quando desconectado
+      setLoading(false)
+      setConnectionError(true)
     }
-    
-    return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current)
-      }
-    }
-  }, [isConnected])
+  }, [isConnected, refreshData])
 
+  // Função para forçar atualização manual (usa o cache do contexto)
   const loadData = async (silent = false) => {
-    // Não tentar carregar se não estiver conectado
     if (!isConnected) {
       if (!silent) {
         setConnectionError(true)
-        setLoading(false) // Garantir que o loading seja desativado
       }
-      return // Manter dados em cache, não limpar
+      return
     }
 
     try {
-      setLoading(true)
-      setConnectionError(false)
-      const [rpas, jobsStatus, cronjobs] = await Promise.all([
-        api.getRPAs(),
-        api.getJobStatus(),
-        api.getCronjobs(),
-      ])
-
-      let containersAtivos = 0
-      let execucoesPendentes = 0
-      let falhasContainers = 0
-      let rpasAtivos = 0
-
-      // Processar RPAs
-      const robotsList = []
-      if (Array.isArray(rpas)) {
-        rpas.forEach((rpa) => {
-          if (rpa.status === 'active') {
-            rpasAtivos++
-          }
-          execucoesPendentes += rpa.execucoes_pendentes || 0
-
-          const status = jobsStatus[rpa.nome_rpa?.toLowerCase()] || jobsStatus[rpa.nome_rpa] || {}
-          containersAtivos += status.running || 0
-          falhasContainers += (status.error || 0) + (status.failed || 0)
-
-          // Determinar status dos containers
-          let containerStatus = 'Idle'
-          let statusColor = 'default'
-          if (status.running > 0) {
-            containerStatus = 'Running'
-            statusColor = 'success'
-          } else if (status.pending > 0) {
-            containerStatus = 'Pending'
-            statusColor = 'warning'
-          } else if (status.error > 0 || status.failed > 0) {
-            containerStatus = 'Error'
-            statusColor = 'error'
-          }
-
-          robotsList.push({
-            nome: rpa.nome_rpa || 'N/A',
-            instancias: `${rpa.jobs_ativos || 0}/${rpa.qtd_max_instancias || 0}`,
-            status: containerStatus,
-            statusColor,
-            execucoes: rpa.execucoes_pendentes || 0,
-            tipo: 'RPA',
-          })
-        })
+      if (!silent) {
+        setLoading(true)
       }
-
-      // Processar Cronjobs
-      if (Array.isArray(cronjobs)) {
-        cronjobs.forEach((cj) => {
-          if (!cj.suspended) {
-            robotsList.push({
-              nome: cj.name || 'N/A',
-              instancias: '-',
-              status: 'Scheduled',
-              statusColor: 'info',
-              execucoes: '-',
-              tipo: 'Cronjob',
-            })
-          }
-        })
-      }
-
-      const cronjobsAtivos = Array.isArray(cronjobs)
-        ? cronjobs.filter((cj) => !cj.suspended).length
-        : 0
-
-      setStats({
-        containersAtivos,
-        execucoesPendentes,
-        falhasContainers,
-        rpasAtivos,
-        cronjobsAtivos,
-      })
-      setRobots(robotsList)
       setConnectionError(false)
+      
+      // Usar refreshData do contexto que já atualiza o cache
+      await refreshData(isConnected)
     } catch (error) {
       console.error('Erro ao carregar dashboard:', error)
       
-      // Verificar se é erro de conexão/timeout
       const isConnectionError = 
         error.message?.includes('Timeout') || 
         error.message?.includes('conexão') ||
@@ -164,22 +671,15 @@ export default function Dashboard({ isConnected = true, onReconnect }) {
       
       if (isConnectionError) {
         setConnectionError(true)
-        
-        // Parar atualizações automáticas se houver erro de conexão
-        if (intervalRef.current) {
-          clearInterval(intervalRef.current)
-          intervalRef.current = null
-        }
       }
-      
-      // Não limpar dados em caso de erro - manter cache
-      // setRobots([]) - removido para manter cache
       
       if (!silent) {
         enqueueSnackbar(`Erro ao carregar dados: ${error.message}`, { variant: 'error' })
       }
     } finally {
-      setLoading(false)
+      if (!silent) {
+        setLoading(false)
+      }
     }
   }
 
@@ -189,11 +689,11 @@ export default function Dashboard({ isConnected = true, onReconnect }) {
       // Aguardar um pouco e tentar recarregar
       setTimeout(() => {
         if (isConnected) {
-          loadData()
+          refreshData(isConnected)
         }
       }, 2000)
     } else {
-      loadData()
+      refreshData(isConnected)
     }
   }
 
@@ -201,17 +701,13 @@ export default function Dashboard({ isConnected = true, onReconnect }) {
   useEffect(() => {
     if (isConnected && connectionError) {
       setConnectionError(false)
-      loadData()
-      // Reiniciar intervalo
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current)
-      }
-      intervalRef.current = setInterval(() => {
-        loadData(true)
-      }, 10000)
+      refreshData(isConnected)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isConnected, connectionError])
+
+  // Listener para eventos do backend (desabilitado - sem reinicialização automática)
+  // useEffect removido - não há mais reinicialização automática
 
   const StatCard = ({ title, value, color }) => (
     <Card sx={{ height: '100%', maxWidth: 250 }}>
@@ -220,7 +716,7 @@ export default function Dashboard({ isConnected = true, onReconnect }) {
           {title}
         </Typography>
         <Typography variant="h4" component="div" sx={{ color, fontWeight: 'bold', fontSize: '1.75rem' }}>
-          {loading ? '...' : value}
+          {value}
         </Typography>
       </CardContent>
     </Card>
@@ -268,7 +764,7 @@ export default function Dashboard({ isConnected = true, onReconnect }) {
       {/* Cards de Estatísticas */}
       <Grid container spacing={2} sx={{ mb: 4 }}>
         <Grid item xs={12} sm={6} md={2.4}>
-          <StatCard title="Containers Ativos" value={stats.containersAtivos} color="#6366F1" />
+          <StatCard title="Instâncias Ativas" value={stats.instanciasAtivas} color="#6366F1" />
         </Grid>
         <Grid item xs={12} sm={6} md={2.4}>
           <StatCard
@@ -285,6 +781,48 @@ export default function Dashboard({ isConnected = true, onReconnect }) {
         </Grid>
         <Grid item xs={12} sm={6} md={2.4}>
           <StatCard title="Cronjobs Agendados" value={stats.cronjobsAtivos} color="#10B981" />
+        </Grid>
+      </Grid>
+
+      {/* Gráficos de Consumo de Recursos */}
+      <Typography 
+        variant="h5" 
+        gutterBottom 
+        sx={{ 
+          mt: 4,
+          mb: 2, 
+          fontWeight: 'bold',
+          color: '#F8FAFC',
+          textShadow: '0 2px 8px rgba(0, 0, 0, 0.3)',
+        }}
+      >
+        Consumo de Recursos da VM
+      </Typography>
+      
+      <Grid container spacing={2}>
+        <Grid item xs={12} md={4}>
+          <LineChart
+            title="Memória RAM"
+            data={resourcesHistory.memoria}
+            maxValue={vmResources.memoria.total_gb || 1}
+            unit="GB"
+          />
+        </Grid>
+        <Grid item xs={12} md={4}>
+          <LineChart
+            title="Armazenamento"
+            data={resourcesHistory.armazenamento}
+            maxValue={vmResources.armazenamento.total_gb || 1}
+            unit="GB"
+          />
+        </Grid>
+        <Grid item xs={12} md={4}>
+          <LineChart
+            title="Processamento (CPU)"
+            data={resourcesHistory.cpu}
+            maxValue={100}
+            unit="%"
+          />
         </Grid>
       </Grid>
 
@@ -330,32 +868,196 @@ export default function Dashboard({ isConnected = true, onReconnect }) {
             ) : robots.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={5} align="center" sx={{ color: '#CBD5E1' }}>
-                  Nenhum robô encontrado
+                  Nenhum container rodando no momento
                 </TableCell>
               </TableRow>
             ) : (
               robots.map((robot, index) => (
-                <TableRow key={`${robot.nome}-${index}`} sx={{ '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.05)' } }}>
-                  <TableCell sx={{ color: '#F8FAFC' }}>{robot.nome}</TableCell>
-                  <TableCell sx={{ color: '#CBD5E1' }}>{robot.instancias}</TableCell>
-                  <TableCell>
+                <TableRow 
+                  key={`${robot.nome}-${index}`} 
+                  sx={{ 
+                    '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.05)' },
+                    '& td': { py: 1.5 } // Altura vertical consistente
+                  }}
+                >
+                  <TableCell sx={{ color: '#F8FAFC', py: 1.5 }}>{robot.nome}</TableCell>
+                  <TableCell sx={{ color: '#CBD5E1', py: 1.5 }}>{robot.instancias}</TableCell>
+                  <TableCell sx={{ py: 1.5 }}>
                     <Chip
                       label={robot.status}
                       color={robot.statusColor}
                       size="small"
                     />
                   </TableCell>
-                  <TableCell sx={{ color: '#CBD5E1' }}>{robot.execucoes}</TableCell>
-                  <TableCell>
-                    <Chip
-                      label={robot.tipo}
-                      color={robot.tipo === 'RPA' ? 'primary' : 'secondary'}
-                      size="small"
-                      variant="outlined"
-                    />
+                  <TableCell sx={{ color: '#CBD5E1', py: 1.5 }}>
+                    {robot.execucoes === 'Rotina Sem Exec' ? (
+                      <Chip
+                        label="Rotina Sem Exec"
+                        color="default"
+                        size="small"
+                        variant="outlined"
+                      />
+                    ) : (
+                      robot.execucoes
+                    )}
+                  </TableCell>
+                  <TableCell sx={{ py: 1.5 }}>
+                    {robot.tipo === 'Cronjob' ? (
+                      <Chip
+                        icon={<AccessTimeIcon />}
+                        label="Agendado"
+                        color="warning"
+                        size="small"
+                        variant="outlined"
+                        sx={{ minWidth: 100, justifyContent: 'center' }}
+                      />
+                    ) : robot.tipo === 'Deploy' ? (
+                      <Chip
+                        icon={<AllInclusiveIcon />}
+                        label="Deploy"
+                        color="info"
+                        size="small"
+                        variant="outlined"
+                        sx={{ minWidth: 100, justifyContent: 'center' }}
+                      />
+                    ) : (
+                      <Chip
+                        icon={<SmartToyIcon />}
+                        label="RPA"
+                        color="primary"
+                        size="small"
+                        variant="outlined"
+                        sx={{ minWidth: 100, justifyContent: 'center' }}
+                      />
+                    )}
                   </TableCell>
                 </TableRow>
               ))
+            )}
+          </TableBody>
+        </Table>
+      </TableContainer>
+
+      {/* Painel de Cronjobs */}
+      <Typography 
+        variant="h5" 
+        gutterBottom 
+        sx={{ 
+          mt: 4,
+          mb: 2, 
+          fontWeight: 'bold',
+          color: '#F8FAFC',
+          textShadow: '0 2px 8px rgba(0, 0, 0, 0.3)',
+        }}
+      >
+        Próximos Cronjobs
+      </Typography>
+      <TableContainer 
+        component={Paper} 
+        sx={{ 
+          backgroundColor: 'rgba(30, 41, 59, 0.3)',
+          backdropFilter: 'blur(20px)',
+          border: '1px solid rgba(255, 255, 255, 0.1)',
+          boxShadow: '0 8px 32px 0 rgba(0, 0, 0, 0.1)',
+        }}
+      >
+        <Table>
+          <TableHead>
+            <TableRow>
+              <TableCell sx={{ color: '#F8FAFC', fontWeight: 'bold' }}>Nome</TableCell>
+              <TableCell sx={{ color: '#F8FAFC', fontWeight: 'bold' }}>Agendamento</TableCell>
+              <TableCell sx={{ color: '#F8FAFC', fontWeight: 'bold' }}>Inicia Em</TableCell>
+              <TableCell sx={{ color: '#F8FAFC', fontWeight: 'bold' }}>Última Execução</TableCell>
+              <TableCell sx={{ color: '#F8FAFC', fontWeight: 'bold' }}>Ações</TableCell>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {cronjobs.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={5} align="center" sx={{ color: '#CBD5E1' }}>
+                  Nenhum cronjob agendado
+                </TableCell>
+              </TableRow>
+            ) : (
+              cronjobs.map((cronjob) => {
+                const proximaExecucao = cronjob.proximaExecucao
+                const horarioFormatado = proximaExecucao 
+                  ? proximaExecucao.toLocaleString('pt-BR', { 
+                      day: '2-digit', 
+                      month: '2-digit', 
+                      year: 'numeric',
+                      hour: '2-digit', 
+                      minute: '2-digit' 
+                    })
+                  : 'N/A'
+                
+                const ultimaExecucao = cronjob.last_successful_time || cronjob.last_schedule_time
+                const ultimaFormatada = ultimaExecucao 
+                  ? new Date(ultimaExecucao).toLocaleString('pt-BR', {
+                      day: '2-digit',
+                      month: '2-digit',
+                      year: 'numeric',
+                      hour: '2-digit',
+                      minute: '2-digit'
+                    })
+                  : 'Nunca executado'
+                
+                return (
+                  <TableRow 
+                    key={cronjob.name} 
+                    sx={{ 
+                      '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.05)' },
+                      '& td': { py: 1.5 } // Mesma altura vertical que a tabela de robôs
+                    }}
+                  >
+                    <TableCell sx={{ color: '#F8FAFC', py: 1.5 }}>
+                      {formatarNome(cronjob.name) || 'N/A'}
+                    </TableCell>
+                    <TableCell sx={{ color: '#CBD5E1', py: 1.5 }}>
+                      {horarioFormatado}
+                    </TableCell>
+                    <TableCell sx={{ color: '#CBD5E1', py: 1.5 }}>
+                      {proximaExecucao ? (
+                        <ContagemRegressiva dataFutura={proximaExecucao} />
+                      ) : (
+                        'N/A'
+                      )}
+                    </TableCell>
+                    <TableCell sx={{ color: '#CBD5E1', py: 1.5 }}>
+                      {ultimaFormatada}
+                    </TableCell>
+                    <TableCell sx={{ py: 1.5, verticalAlign: 'middle' }}>
+                      <Button
+                        variant="outlined"
+                        size="small"
+                        startIcon={<PlayArrowIcon sx={{ fontSize: '1rem' }} />}
+                        onClick={async () => {
+                          try {
+                            await api.cronjobRunNow(cronjob.name)
+                            enqueueSnackbar('Cronjob executado com sucesso', { variant: 'success' })
+                            // Recarregar dados após alguns segundos
+                            setTimeout(() => {
+                              loadData(true)
+                            }, 2000)
+                          } catch (error) {
+                            enqueueSnackbar(`Erro ao executar cronjob: ${error.message}`, { variant: 'error' })
+                          }
+                        }}
+                        sx={{ 
+                          minWidth: 120,
+                          py: 0.25, // Reduzir padding vertical do botão
+                          px: 1.5, // Padding horizontal
+                          height: 28, // Altura fixa menor
+                          fontSize: '0.75rem', // Fonte menor
+                          lineHeight: 1.2 // Reduzir line-height
+                        }}
+                      >
+                        Iniciar
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                )
+              })
             )}
           </TableBody>
         </Table>

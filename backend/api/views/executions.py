@@ -1,7 +1,9 @@
 from rest_framework import viewsets, status
 from rest_framework.response import Response
-from backend.services.database_service import DatabaseService
-from backend.services.file_service import FileService
+from backend.services.service_manager import (
+    get_database_service,
+    get_file_service
+)
 from api.serializers.models import ExecutionSerializer
 import logging
 
@@ -12,8 +14,9 @@ class ExecutionViewSet(viewsets.ViewSet):
     
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.db_service = DatabaseService()
-        self.file_service = FileService()
+        # Usar serviços singleton para evitar reconexões constantes
+        self.db_service = get_database_service()
+        self.file_service = get_file_service()
     
     def list(self, request):
         """Lista execuções pendentes (status_01=4) do banco de dados."""

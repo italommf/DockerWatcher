@@ -11,6 +11,9 @@ import Deployments from '../../pages/Deployments'
 import Falhas from '../../pages/Falhas'
 import Configuracoes from '../../pages/Configuracoes'
 import Logs from '../../pages/Logs'
+import CriarRPA from '../../pages/CriarRPA'
+import CriarCronjob from '../../pages/CriarCronjob'
+import CriarDeployment from '../../pages/CriarDeployment'
 import api from '../../services/api'
 
 const drawerWidth = 280
@@ -199,6 +202,10 @@ export default function Layout() {
   const renderPage = () => {
     const isConnected = connectionStatus.ssh && connectionStatus.mysql
     
+    const handleBack = (page) => {
+      setCurrentPage(page)
+    }
+    
     switch (currentPage) {
       case 'dashboard':
         return <Dashboard isConnected={isConnected} onReconnect={handleManualReconnect} />
@@ -216,6 +223,12 @@ export default function Layout() {
         return <Configuracoes />
       case 'logs':
         return <Logs />
+      case 'criar-rpa':
+        return <CriarRPA isConnected={isConnected} onReconnect={handleManualReconnect} onBack={handleBack} />
+      case 'criar-cronjob':
+        return <CriarCronjob isConnected={isConnected} onReconnect={handleManualReconnect} onBack={handleBack} />
+      case 'criar-deployment':
+        return <CriarDeployment isConnected={isConnected} onReconnect={handleManualReconnect} onBack={handleBack} />
       default:
         return <Dashboard isConnected={isConnected} onReconnect={handleManualReconnect} />
     }

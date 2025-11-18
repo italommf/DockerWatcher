@@ -75,17 +75,22 @@ host = 127.0.0.1
 
 4. **Rodar:**
 
-Backend:
+**Backend (em um terminal):**
 ```bash
 cd backend
-python run_server.py
+python manage.py runserver 127.0.0.1:8000
 ```
 
-Frontend (em outro terminal):
+**Frontend (em outro terminal):**
 ```bash
 cd Frontend
 npm run dev
 ```
+
+> **Nota:** 
+> - O backend e o frontend devem ser iniciados separadamente
+> - O WatcherService será iniciado automaticamente quando o Django estiver pronto (após ~5 segundos)
+> - Não é necessário iniciar nada manualmente além desses dois comandos
 
 ## Funcionalidades
 

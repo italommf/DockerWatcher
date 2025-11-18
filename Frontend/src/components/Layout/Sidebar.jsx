@@ -1,5 +1,5 @@
-import React from 'react'
-import { Box, List, ListItem, ListItemButton, ListItemIcon, ListItemText, Divider, Typography, Button, CircularProgress } from '@mui/material'
+import React, { useState } from 'react'
+import { Box, List, ListItem, ListItemButton, ListItemIcon, ListItemText, Divider, Typography, Button, CircularProgress, Collapse } from '@mui/material'
 import {
   Dashboard as DashboardIcon,
   Settings as SettingsIcon,
@@ -11,19 +11,46 @@ import {
   SettingsApplications as SettingsApplicationsIcon,
   Refresh as RefreshIcon,
   Description as DescriptionIcon,
+  Add as AddIcon,
+  ExpandLess,
+  ExpandMore,
 } from '@mui/icons-material'
 
 const menuItems = [
   { id: 'dashboard', label: 'Dashboard', icon: <DashboardIcon /> },
-  { id: 'jobs', label: 'Jobs', icon: <SettingsIcon /> },
-  { id: 'rpas', label: 'RPAs', icon: <RobotIcon /> },
-  { id: 'cronjobs', label: 'Cronjobs', icon: <ScheduleIcon /> },
-  { id: 'deployments', label: 'Deployments', icon: <RocketIcon /> },
+  { id: 'jobs', label: 'Containers Rodando', icon: <SettingsIcon /> },
   { id: 'falhas', label: 'Falhas', icon: <ErrorIcon /> },
-  { id: 'logs', label: 'Logs', icon: <DescriptionIcon /> },
+  { id: 'logs', label: 'Logs do App', icon: <DescriptionIcon /> },
 ]
 
 export default function Sidebar({ currentPage, onPageChange, connectionStatus, onReconnect, isReconnecting, reconnectAttempts = 0 }) {
+  const isCreatePage = currentPage === 'criar-rpa' || currentPage === 'criar-cronjob' || currentPage === 'criar-deployment'
+  const isRegisteredPage = currentPage === 'rpas' || currentPage === 'cronjobs' || currentPage === 'deployments'
+  const [createMenuOpen, setCreateMenuOpen] = useState(isCreatePage)
+  const [registeredMenuOpen, setRegisteredMenuOpen] = useState(isRegisteredPage)
+
+  // Expandir automaticamente se estiver em uma página de criação
+  React.useEffect(() => {
+    if (isCreatePage) {
+      setCreateMenuOpen(true)
+    }
+  }, [currentPage, isCreatePage])
+
+  // Expandir automaticamente se estiver em uma página de robôs cadastrados
+  React.useEffect(() => {
+    if (isRegisteredPage) {
+      setRegisteredMenuOpen(true)
+    }
+  }, [currentPage, isRegisteredPage])
+
+  const handleCreateMenuToggle = () => {
+    setCreateMenuOpen(!createMenuOpen)
+  }
+
+  const handleRegisteredMenuToggle = () => {
+    setRegisteredMenuOpen(!registeredMenuOpen)
+  }
+
   return (
     <Box 
       sx={{ 
@@ -162,6 +189,258 @@ export default function Sidebar({ currentPage, onPageChange, connectionStatus, o
             </ListItemButton>
           </ListItem>
         ))}
+
+        {/* Menu Robôs Cadastrados - Expansível */}
+        <ListItem disablePadding sx={{ mb: 0.5 }}>
+          <ListItemButton
+            selected={isRegisteredPage}
+            onClick={handleRegisteredMenuToggle}
+            sx={{
+              mx: 1,
+              borderRadius: 2,
+              backdropFilter: 'blur(10px)',
+              '&.Mui-selected': {
+                backgroundColor: 'rgba(99, 102, 241, 0.4)',
+                backdropFilter: 'blur(15px)',
+                color: 'white',
+                boxShadow: '0 4px 16px 0 rgba(99, 102, 241, 0.3)',
+                border: '1px solid rgba(255, 255, 255, 0.2)',
+                '&:hover': {
+                  backgroundColor: 'rgba(99, 102, 241, 0.5)',
+                },
+              },
+              '&:hover': {
+                backgroundColor: 'rgba(255, 255, 255, 0.1)',
+                backdropFilter: 'blur(10px)',
+              },
+            }}
+          >
+            <ListItemIcon sx={{ color: isRegisteredPage ? 'white' : '#CBD5E1', minWidth: 40 }}>
+              <RobotIcon />
+            </ListItemIcon>
+            <ListItemText primary="Robôs Cadastrados" />
+            <Box sx={{ color: isRegisteredPage ? 'white' : '#CBD5E1' }}>
+              {registeredMenuOpen ? <ExpandLess /> : <ExpandMore />}
+            </Box>
+          </ListItemButton>
+        </ListItem>
+        <Collapse in={registeredMenuOpen} timeout="auto" unmountOnExit>
+          <List component="div" disablePadding>
+            <ListItemButton
+              selected={currentPage === 'rpas'}
+              onClick={() => onPageChange('rpas')}
+              sx={{
+                mx: 1,
+                ml: 4,
+                borderRadius: 2,
+                backdropFilter: 'blur(10px)',
+                '&.Mui-selected': {
+                  backgroundColor: 'rgba(99, 102, 241, 0.4)',
+                  backdropFilter: 'blur(15px)',
+                  color: 'white',
+                  boxShadow: '0 4px 16px 0 rgba(99, 102, 241, 0.3)',
+                  border: '1px solid rgba(255, 255, 255, 0.2)',
+                  '&:hover': {
+                    backgroundColor: 'rgba(99, 102, 241, 0.5)',
+                  },
+                },
+                '&:hover': {
+                  backgroundColor: 'rgba(255, 255, 255, 0.1)',
+                  backdropFilter: 'blur(10px)',
+                },
+              }}
+            >
+              <ListItemIcon sx={{ color: currentPage === 'rpas' ? 'white' : '#CBD5E1', minWidth: 40 }}>
+                <RobotIcon />
+              </ListItemIcon>
+              <ListItemText primary="RPAs" />
+            </ListItemButton>
+            <ListItemButton
+              selected={currentPage === 'cronjobs'}
+              onClick={() => onPageChange('cronjobs')}
+              sx={{
+                mx: 1,
+                ml: 4,
+                borderRadius: 2,
+                backdropFilter: 'blur(10px)',
+                '&.Mui-selected': {
+                  backgroundColor: 'rgba(99, 102, 241, 0.4)',
+                  backdropFilter: 'blur(15px)',
+                  color: 'white',
+                  boxShadow: '0 4px 16px 0 rgba(99, 102, 241, 0.3)',
+                  border: '1px solid rgba(255, 255, 255, 0.2)',
+                  '&:hover': {
+                    backgroundColor: 'rgba(99, 102, 241, 0.5)',
+                  },
+                },
+                '&:hover': {
+                  backgroundColor: 'rgba(255, 255, 255, 0.1)',
+                  backdropFilter: 'blur(10px)',
+                },
+              }}
+            >
+              <ListItemIcon sx={{ color: currentPage === 'cronjobs' ? 'white' : '#CBD5E1', minWidth: 40 }}>
+                <ScheduleIcon />
+              </ListItemIcon>
+              <ListItemText primary="Cronjobs" />
+            </ListItemButton>
+            <ListItemButton
+              selected={currentPage === 'deployments'}
+              onClick={() => onPageChange('deployments')}
+              sx={{
+                mx: 1,
+                ml: 4,
+                borderRadius: 2,
+                backdropFilter: 'blur(10px)',
+                '&.Mui-selected': {
+                  backgroundColor: 'rgba(99, 102, 241, 0.4)',
+                  backdropFilter: 'blur(15px)',
+                  color: 'white',
+                  boxShadow: '0 4px 16px 0 rgba(99, 102, 241, 0.3)',
+                  border: '1px solid rgba(255, 255, 255, 0.2)',
+                  '&:hover': {
+                    backgroundColor: 'rgba(99, 102, 241, 0.5)',
+                  },
+                },
+                '&:hover': {
+                  backgroundColor: 'rgba(255, 255, 255, 0.1)',
+                  backdropFilter: 'blur(10px)',
+                },
+              }}
+            >
+              <ListItemIcon sx={{ color: currentPage === 'deployments' ? 'white' : '#CBD5E1', minWidth: 40 }}>
+                <RocketIcon />
+              </ListItemIcon>
+              <ListItemText primary="Deployments" />
+            </ListItemButton>
+          </List>
+        </Collapse>
+
+        {/* Menu Adicionar Robô - Expansível */}
+        <ListItem disablePadding sx={{ mb: 0.5 }}>
+          <ListItemButton
+            selected={isCreatePage}
+            onClick={handleCreateMenuToggle}
+            sx={{
+              mx: 1,
+              borderRadius: 2,
+              backdropFilter: 'blur(10px)',
+              '&.Mui-selected': {
+                backgroundColor: 'rgba(99, 102, 241, 0.4)',
+                backdropFilter: 'blur(15px)',
+                color: 'white',
+                boxShadow: '0 4px 16px 0 rgba(99, 102, 241, 0.3)',
+                border: '1px solid rgba(255, 255, 255, 0.2)',
+                '&:hover': {
+                  backgroundColor: 'rgba(99, 102, 241, 0.5)',
+                },
+              },
+              '&:hover': {
+                backgroundColor: 'rgba(255, 255, 255, 0.1)',
+                backdropFilter: 'blur(10px)',
+              },
+            }}
+          >
+            <ListItemIcon sx={{ color: isCreatePage ? 'white' : '#CBD5E1', minWidth: 40 }}>
+              <AddIcon />
+            </ListItemIcon>
+            <ListItemText primary="Adicionar Robô" />
+            <Box sx={{ color: isCreatePage ? 'white' : '#CBD5E1' }}>
+              {createMenuOpen ? <ExpandLess /> : <ExpandMore />}
+            </Box>
+          </ListItemButton>
+        </ListItem>
+        <Collapse in={createMenuOpen} timeout="auto" unmountOnExit>
+          <List component="div" disablePadding>
+            <ListItemButton
+              selected={currentPage === 'criar-rpa'}
+              onClick={() => onPageChange('criar-rpa')}
+              sx={{
+                mx: 1,
+                ml: 4,
+                borderRadius: 2,
+                backdropFilter: 'blur(10px)',
+                '&.Mui-selected': {
+                  backgroundColor: 'rgba(99, 102, 241, 0.4)',
+                  backdropFilter: 'blur(15px)',
+                  color: 'white',
+                  boxShadow: '0 4px 16px 0 rgba(99, 102, 241, 0.3)',
+                  border: '1px solid rgba(255, 255, 255, 0.2)',
+                  '&:hover': {
+                    backgroundColor: 'rgba(99, 102, 241, 0.5)',
+                  },
+                },
+                '&:hover': {
+                  backgroundColor: 'rgba(255, 255, 255, 0.1)',
+                  backdropFilter: 'blur(10px)',
+                },
+              }}
+            >
+              <ListItemIcon sx={{ color: currentPage === 'criar-rpa' ? 'white' : '#CBD5E1', minWidth: 40 }}>
+                <RobotIcon />
+              </ListItemIcon>
+              <ListItemText primary="Novo RPA" />
+            </ListItemButton>
+            <ListItemButton
+              selected={currentPage === 'criar-cronjob'}
+              onClick={() => onPageChange('criar-cronjob')}
+              sx={{
+                mx: 1,
+                ml: 4,
+                borderRadius: 2,
+                backdropFilter: 'blur(10px)',
+                '&.Mui-selected': {
+                  backgroundColor: 'rgba(99, 102, 241, 0.4)',
+                  backdropFilter: 'blur(15px)',
+                  color: 'white',
+                  boxShadow: '0 4px 16px 0 rgba(99, 102, 241, 0.3)',
+                  border: '1px solid rgba(255, 255, 255, 0.2)',
+                  '&:hover': {
+                    backgroundColor: 'rgba(99, 102, 241, 0.5)',
+                  },
+                },
+                '&:hover': {
+                  backgroundColor: 'rgba(255, 255, 255, 0.1)',
+                  backdropFilter: 'blur(10px)',
+                },
+              }}
+            >
+              <ListItemIcon sx={{ color: currentPage === 'criar-cronjob' ? 'white' : '#CBD5E1', minWidth: 40 }}>
+                <ScheduleIcon />
+              </ListItemIcon>
+              <ListItemText primary="Novo Cronjob" />
+            </ListItemButton>
+            <ListItemButton
+              selected={currentPage === 'criar-deployment'}
+              onClick={() => onPageChange('criar-deployment')}
+              sx={{
+                mx: 1,
+                ml: 4,
+                borderRadius: 2,
+                backdropFilter: 'blur(10px)',
+                '&.Mui-selected': {
+                  backgroundColor: 'rgba(99, 102, 241, 0.4)',
+                  backdropFilter: 'blur(15px)',
+                  color: 'white',
+                  boxShadow: '0 4px 16px 0 rgba(99, 102, 241, 0.3)',
+                  border: '1px solid rgba(255, 255, 255, 0.2)',
+                  '&:hover': {
+                    backgroundColor: 'rgba(99, 102, 241, 0.5)',
+                  },
+                },
+                '&:hover': {
+                  backgroundColor: 'rgba(255, 255, 255, 0.1)',
+                  backdropFilter: 'blur(10px)',
+                },
+              }}
+            >
+              <ListItemIcon sx={{ color: currentPage === 'criar-deployment' ? 'white' : '#CBD5E1', minWidth: 40 }}>
+                <RocketIcon />
+              </ListItemIcon>
+              <ListItemText primary="Novo Deployment" />
+            </ListItemButton>
+          </List>
+        </Collapse>
       </List>
 
       <Divider sx={{ borderColor: 'rgba(255, 255, 255, 0.1)', mx: 2, mt: 'auto' }} />

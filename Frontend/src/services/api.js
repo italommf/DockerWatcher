@@ -4,27 +4,50 @@ const API_BASE_URL = 'http://127.0.0.1:8000'
 
 const api = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 5000,
+  timeout: 60000, // 60 segundos para permitir operações SSH/MySQL que podem demorar
   headers: {
     'Content-Type': 'application/json',
   },
 })
 
-// Interceptor para tratar erros
+// Instância com timeout maior para operações de conexão
+const apiConnection = axios.create({
+  baseURL: API_BASE_URL,
+  timeout: 60000, // 60 segundos para testes de conexão
+  headers: {
+    'Content-Type': 'application/json',
+  },
+})
+
+// Interceptor para tratar erros (sem reinicialização automática)
+const errorInterceptor = (error) => {
+  if (error.code === 'ECONNABORTED') {
+    throw new Error('Timeout na requisição. O backend pode estar lento ou não está respondendo.')
+  }
+  if (error.response) {
+    // Erro com resposta do servidor
+    const errorMessage = error.response.data?.error || error.response.data?.message || 'Erro na requisição'
+    throw new Error(errorMessage)
+  }
+  if (error.request) {
+    // Requisição foi feita mas não houve resposta
+    if (error.code === 'ECONNREFUSED') {
+      throw new Error('Não foi possível conectar ao backend. Verifique se está rodando em http://127.0.0.1:8000')
+    }
+    throw new Error('Erro de conexão. Verifique se o backend está rodando em http://127.0.0.1:8000')
+  }
+  throw error
+}
+
 api.interceptors.response.use(
   (response) => response,
-  (error) => {
-    if (error.code === 'ECONNABORTED') {
-      throw new Error('Timeout na requisição. Verifique se o backend está rodando.')
-    }
-    if (error.response) {
-      throw new Error(error.response.data?.error || error.response.data?.message || 'Erro na requisição')
-    }
-    if (error.request) {
-      throw new Error('Erro de conexão. Verifique se o backend está rodando.')
-    }
-    throw error
-  }
+  errorInterceptor
+)
+
+// Mesmo interceptor para apiConnection
+apiConnection.interceptors.response.use(
+  (response) => response,
+  errorInterceptor
 )
 
 export default {
@@ -35,7 +58,17 @@ export default {
   },
 
   async reloadServices() {
-    const response = await api.post('/api/connection/reload/')
+    const response = await apiConnection.post('/api/connection/reload/')
+    return response.data
+  },
+
+  async testSshConnection() {
+    const response = await apiConnection.get('/api/connection/ssh/')
+    return response.data
+  },
+
+  async testMysqlConnection() {
+    const response = await apiConnection.get('/api/connection/mysql/')
     return response.data
   },
 
@@ -122,6 +155,17 @@ export default {
     return response.data
   },
 
+  // Falhas (Pods com falhas)
+  async getFailedPods() {
+    const response = await api.get('/api/falhas/')
+    return response.data
+  },
+
+  async getFailedPodLogs(podName, tail = 100) {
+    const response = await api.get(`/api/falhas/${podName}/logs/`, { params: { tail } })
+    return response.data
+  },
+
   // Cronjobs
   async getCronjobs() {
     const response = await api.get('/api/cronjobs/')
@@ -182,6 +226,12 @@ export default {
 
   async saveConfig(configData) {
     const response = await api.post('/api/config/save/', configData)
+    return response.data
+  },
+
+  // Resources
+  async getVMResources() {
+    const response = await api.get('/api/resources/vm/')
     return response.data
   },
 }

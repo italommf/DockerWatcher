@@ -1,5 +1,6 @@
 import paramiko
 import logging
+import threading
 from typing import Optional, Tuple
 from contextlib import contextmanager
 from backend.config.ssh_config import get_ssh_config
@@ -9,96 +10,178 @@ logger = logging.getLogger(__name__)
 class SSHService:
     """Serviço para gerenciar conexões SSH e executar comandos remotos."""
     
-    def __init__(self):
+    def __init__(self, auto_connect: bool = False):
         self.config = get_ssh_config()
         self._client: Optional[paramiko.SSHClient] = None
         self._sftp: Optional[paramiko.SFTPClient] = None
+        self._lock = threading.RLock()  # RLock para permitir reentrância
+        # Conectar automaticamente se solicitado (usado na inicialização)
+        if auto_connect:
+            try:
+                self._ensure_client()
+            except Exception as e:
+                logger.warning(f"Não foi possível conectar SSH na inicialização: {e}")
     
     def reload_config(self):
-        """Recarrega as configurações SSH do arquivo."""
-        self.config = get_ssh_config()
-        # Fechar conexões existentes
-        if self._sftp:
+        """Recarrega as configurações SSH do arquivo e fecha conexões antigas."""
+        with self._lock:
+            self.config = get_ssh_config()
+            # Fechar conexões existentes
+            if self._sftp:
+                try:
+                    self._sftp.close()
+                except:
+                    pass
+                self._sftp = None
+            if self._client:
+                try:
+                    self._client.close()
+                except:
+                    pass
+                self._client = None
+            logger.info("Configurações SSH recarregadas, conexões antigas fechadas")
+    
+    def _ensure_client(self) -> paramiko.SSHClient:
+        """Garante que existe uma conexão SSH ativa, cria ou reconecta se necessário."""
+        # Verificação rápida sem lock primeiro
+        if self._client is not None:
             try:
-                self._sftp.close()
+                # Verificar se o transporte ainda está ativo (sem lock para ser rápido)
+                transport = self._client.get_transport()
+                if transport and transport.is_active():
+                    return self._client
             except:
                 pass
-            self._sftp = None
-        if self._client:
+        
+        # Se chegou aqui, precisa verificar/criar com lock
+        with self._lock:
+            # Verificar novamente dentro do lock (double-check pattern)
+            if self._client is not None:
+                try:
+                    transport = self._client.get_transport()
+                    if transport and transport.is_active():
+                        return self._client
+                    else:
+                        # Conexão morreu, fechar e recriar
+                        try:
+                            self._client.close()
+                        except:
+                            pass
+                        self._client = None
+                except:
+                    # Erro ao verificar, assumir que está morta
+                    self._client = None
+            
+            # Criar nova conexão
+            logger.info("Criando nova conexão SSH persistente...")
+            client = paramiko.SSHClient()
+            client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            
             try:
-                self._client.close()
+                if self.config['use_key'] and self.config.get('key_path'):
+                    # Conectar usando chave SSH
+                    key_path = self.config['key_path']
+                    client.connect(
+                        hostname=self.config['host'],
+                        port=self.config['port'],
+                        username=self.config['username'],
+                        key_filename=key_path,
+                        look_for_keys=False,  # Não procurar chaves padrão
+                        allow_agent=False,  # Não usar agente SSH
+                        timeout=10
+                    )
+                elif self.config.get('password'):
+                    # Conectar usando senha
+                    client.connect(
+                        hostname=self.config['host'],
+                        port=self.config['port'],
+                        username=self.config['username'],
+                        password=self.config['password'],
+                        look_for_keys=False,  # Não procurar chaves padrão
+                        allow_agent=False,  # Não usar agente SSH
+                        timeout=10
+                    )
+                else:
+                    raise ValueError("É necessário fornecer chave SSH ou senha")
+                
+                self._client = client
+                logger.info("Conexão SSH persistente estabelecida")
+                return self._client
+            except Exception as e:
+                logger.error(f"Erro ao conectar SSH: {e}")
+                raise
+    
+    def _ensure_sftp(self) -> paramiko.SFTPClient:
+        """Garante que existe uma conexão SFTP ativa."""
+        # Verificação rápida sem lock primeiro
+        if self._sftp is not None:
+            try:
+                # Tentar uma operação simples para verificar se está ativo (sem lock)
+                self._sftp.listdir('.')
+                return self._sftp
             except:
                 pass
-            self._client = None
+        
+        # Se chegou aqui, precisa verificar/criar com lock
+        with self._lock:
+            # Verificar novamente dentro do lock (double-check pattern)
+            if self._sftp is not None:
+                try:
+                    self._sftp.listdir('.')
+                    return self._sftp
+                except:
+                    # SFTP morreu, fechar e recriar
+                    try:
+                        self._sftp.close()
+                    except:
+                        pass
+                    self._sftp = None
+            
+            # Criar novo SFTP a partir da conexão SSH persistente
+            # _ensure_client já gerencia o lock internamente
+            client = self._ensure_client()
+            try:
+                self._sftp = client.open_sftp()
+                logger.debug("Conexão SFTP persistente estabelecida")
+                return self._sftp
+            except Exception as e:
+                logger.error(f"Erro ao criar SFTP: {e}")
+                raise
     
     def _create_client(self) -> paramiko.SSHClient:
-        """Cria um novo cliente SSH."""
-        client = paramiko.SSHClient()
-        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        
-        try:
-            if self.config['use_key'] and self.config['key_path']:
-                # Conectar usando chave SSH
-                key_path = self.config['key_path']
-                client.connect(
-                    hostname=self.config['host'],
-                    port=self.config['port'],
-                    username=self.config['username'],
-                    key_filename=key_path,
-                    timeout=10
-                )
-            elif self.config['password']:
-                # Conectar usando senha
-                client.connect(
-                    hostname=self.config['host'],
-                    port=self.config['port'],
-                    username=self.config['username'],
-                    password=self.config['password'],
-                    timeout=10
-                )
-            else:
-                raise ValueError("É necessário fornecer chave SSH ou senha")
-            
-            return client
-        except Exception as e:
-            logger.error(f"Erro ao conectar SSH: {e}")
-            raise
+        """Cria um novo cliente SSH (método legado, mantido para compatibilidade)."""
+        return self._ensure_client()
     
     @contextmanager
     def get_connection(self):
-        """Context manager para obter conexão SSH."""
-        client = None
-        try:
-            client = self._create_client()
-            yield client
-        finally:
-            if client:
-                client.close()
+        """Context manager para obter conexão SSH (reutiliza conexão persistente)."""
+        # Usar conexão persistente, não fechar ao sair
+        client = self._ensure_client()
+        yield client
+        # Não fechar - manter conexão persistente
     
     @contextmanager
     def get_sftp(self):
-        """Context manager para obter conexão SFTP."""
-        client = None
-        sftp = None
-        try:
-            client = self._create_client()
-            sftp = client.open_sftp()
-            yield sftp
-        finally:
-            if sftp:
-                sftp.close()
-            if client:
-                client.close()
+        """Context manager para obter conexão SFTP (reutiliza conexão persistente)."""
+        # Usar SFTP persistente, não fechar ao sair
+        sftp = self._ensure_sftp()
+        yield sftp
+        # Não fechar - manter conexão persistente
     
     def execute_command(self, command: str, timeout: int = 30) -> Tuple[int, str, str]:
         """
         Executa um comando no servidor remoto via SSH.
+        Usa conexão persistente com lock para serializar comandos (paramiko não é thread-safe).
         
         Returns:
             Tuple[int, str, str]: (return_code, stdout, stderr)
         """
-        try:
-            with self.get_connection() as client:
+        # Usar lock durante toda a execução para serializar comandos SSH
+        # (paramiko não é thread-safe para múltiplos comandos simultâneos)
+        with self._lock:
+            try:
+                # Obter conexão
+                client = self._ensure_client()
                 stdin, stdout, stderr = client.exec_command(command, timeout=timeout)
                 
                 return_code = stdout.channel.recv_exit_status()
@@ -106,9 +189,28 @@ class SSHService:
                 stderr_text = stderr.read().decode('utf-8')
                 
                 return return_code, stdout_text, stderr_text
-        except Exception as e:
-            logger.error(f"Erro ao executar comando SSH: {e}")
-            raise
+            except Exception as e:
+                logger.error(f"Erro ao executar comando SSH: {e}")
+                # Se a conexão morreu, limpar e tentar novamente uma vez
+                if "not connected" in str(e).lower() or "transport" in str(e).lower():
+                    try:
+                        if self._client:
+                            try:
+                                self._client.close()
+                            except:
+                                pass
+                            self._client = None
+                        # Tentar novamente
+                        client = self._ensure_client()
+                        stdin, stdout, stderr = client.exec_command(command, timeout=timeout)
+                        return_code = stdout.channel.recv_exit_status()
+                        stdout_text = stdout.read().decode('utf-8')
+                        stderr_text = stderr.read().decode('utf-8')
+                        return return_code, stdout_text, stderr_text
+                    except Exception as retry_error:
+                        logger.error(f"Erro ao tentar novamente: {retry_error}")
+                        raise
+                raise
     
     def test_connection(self) -> bool:
         """Testa a conexão SSH."""

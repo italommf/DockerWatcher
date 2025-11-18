@@ -9,8 +9,13 @@ logger = logging.getLogger(__name__)
 class KubernetesService:
     """Serviço para executar comandos kubectl via SSH."""
     
-    def __init__(self):
-        self.ssh_service = SSHService()
+    def __init__(self, ssh_service=None):
+        # Permitir injetar ssh_service para reutilização (usado pelo service_manager)
+        if ssh_service is None:
+            from backend.services.service_manager import get_ssh_service
+            self.ssh_service = get_ssh_service()
+        else:
+            self.ssh_service = ssh_service
     
     def get_pods(self, label_selector: str = None) -> List[Dict]:
         """
@@ -157,16 +162,25 @@ class KubernetesService:
             return []
     
     def count_active_jobs(self, nome_do_robo: str) -> int:
-        """Conta jobs ativos de um RPA específico."""
+        """Conta jobs ativos de um RPA específico usando kubectl get jobs."""
         label_selector = f"nome_robo={nome_do_robo.lower()}"
-        pods = self.get_pods(label_selector)
+        jobs = self.get_jobs(label_selector)
         
         count = 0
-        for pod in pods:
+        for job in jobs:
+            # Contar jobs que têm pods ativos (running) ou pendentes
+            active = job.get('active', 0)
+            if active > 0:
+                count += active
+        
+        # Também verificar pods pendentes que podem não estar no status do job
+        pods = self.get_pods(label_selector)
+        pods_de_jobs = [p for p in pods if p.get('labels', {}).get('job-name')]
+        
+        for pod in pods_de_jobs:
             phase = pod.get('phase', '')
-            status = pod.get('status', '')
-            # Contar apenas Running, Pending ou Succeeded (mas ainda não terminou completamente)
-            if phase in ['Running', 'Pending'] or (phase == 'Succeeded' and status == 'Succeeded'):
+            # Se o pod está pendente, considerar como job ativo
+            if phase == 'Pending':
                 count += 1
         
         return count

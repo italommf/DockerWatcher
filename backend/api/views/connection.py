@@ -1,8 +1,11 @@
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from rest_framework import status
-from backend.services.ssh_service import SSHService
-from backend.services.database_service import DatabaseService
+from backend.services.service_manager import (
+    get_ssh_service,
+    get_database_service,
+    reset_services
+)
 from api.serializers.models import ConnectionStatusSerializer
 import logging
 
@@ -11,20 +14,23 @@ logger = logging.getLogger(__name__)
 @api_view(['GET'])
 def connection_status(request):
     """Verifica o status das conexões SSH e MySQL."""
-    ssh_service = SSHService()
-    db_service = DatabaseService()
+    # Usar serviços singleton para evitar reconexões constantes
+    ssh_service = get_ssh_service()
+    db_service = get_database_service()
     
     ssh_connected = ssh_service.test_connection()
-    mysql_connected = db_service.test_connection()
+    mysql_connected, mysql_error = db_service.test_connection_with_details()
     
     ssh_error = None
-    mysql_error = None
-    
     if not ssh_connected:
-        ssh_error = "Falha na conexão SSH"
+        ssh_error = "Falha na conexão SSH. Verifique as configurações no config.ini"
     
-    if not mysql_connected:
-        mysql_error = "Falha na conexão MySQL"
+    # mysql_error já vem preenchido pelo método test_connection_with_details
+    if mysql_connected:
+        mysql_error = None
+    
+    # Log para debug
+    logger.info(f"Status conexão - SSH: {ssh_connected}, MySQL: {mysql_connected}, Erro MySQL: {mysql_error}")
     
     data = {
         'ssh_connected': ssh_connected,
@@ -41,29 +47,24 @@ def connection_status(request):
 
 @api_view(['POST'])
 def reload_services(request):
-    """Recarrega as configurações e reinicializa os serviços."""
+    """Recarrega as configurações e reinicializa os serviços (sem testar conexões)."""
     try:
-        # Criar novas instâncias dos serviços que já leem as configurações atualizadas do arquivo
-        # Como os serviços são criados a cada chamada, eles naturalmente usam as configurações mais recentes
-        # Mas vamos forçar o recarregamento para garantir que conexões antigas sejam fechadas
+        # Resetar serviços singleton para forçar recarregamento
+        reset_services()
         
-        ssh_service = SSHService()
-        db_service = DatabaseService()
+        # Obter novas instâncias dos serviços
+        ssh_service = get_ssh_service()
+        db_service = get_database_service()
         
         # Recarregar configurações explicitamente (fecha conexões antigas se houver)
+        # Não testar conexões aqui para evitar timeout - os testes serão feitos separadamente
         ssh_service.reload_config()
         db_service.reload_config()
         
-        # Testar conexões com novas configurações
-        ssh_connected = ssh_service.test_connection()
-        mysql_connected = db_service.test_connection()
-        
-        logger.info(f"Serviços recarregados. SSH: {ssh_connected}, MySQL: {mysql_connected}")
+        logger.info("Serviços recarregados com sucesso (configurações atualizadas)")
         
         return Response({
-            'message': 'Serviços recarregados com sucesso',
-            'ssh_connected': ssh_connected,
-            'mysql_connected': mysql_connected,
+            'message': 'Serviços recarregados com sucesso. Use os botões de teste para verificar as conexões.',
         }, status=status.HTTP_200_OK)
     except Exception as e:
         logger.error(f"Erro ao recarregar serviços: {e}")
@@ -71,4 +72,48 @@ def reload_services(request):
             'error': str(e),
             'message': 'Erro ao recarregar serviços'
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+@api_view(['GET'])
+def mysql_status(request):
+    """Testa apenas a conexão MySQL e retorna status detalhado."""
+    # Usar serviço singleton para evitar reconexões constantes
+    db_service = get_database_service()
+    mysql_connected, mysql_error = db_service.test_connection_with_details()
+    
+    data = {
+        'mysql_connected': mysql_connected,
+        'mysql_error': mysql_error if not mysql_connected else None,
+        'message': 'Conexão MySQL verificada' if mysql_connected else 'Falha na conexão MySQL'
+    }
+    
+    return Response(data, status=status.HTTP_200_OK)
+
+@api_view(['GET'])
+def ssh_status(request):
+    """Testa apenas a conexão SSH e retorna status detalhado."""
+    try:
+        # Usar serviço singleton para evitar reconexões constantes
+        ssh_service = get_ssh_service()
+        ssh_connected = ssh_service.test_connection()
+        
+        ssh_error = None
+        if not ssh_connected:
+            ssh_error = "Falha na conexão SSH. Verifique host, porta, usuário e senha/chave no config.ini"
+        
+        data = {
+            'ssh_connected': ssh_connected,
+            'ssh_error': ssh_error,
+            'message': 'Conexão SSH verificada' if ssh_connected else 'Falha na conexão SSH'
+        }
+        
+        logger.info(f"Teste SSH: {ssh_connected}, Erro: {ssh_error}")
+        
+        return Response(data, status=status.HTTP_200_OK)
+    except Exception as e:
+        logger.error(f"Erro ao testar conexão SSH: {e}")
+        return Response({
+            'ssh_connected': False,
+            'ssh_error': f"Erro ao testar conexão: {str(e)}",
+            'message': 'Erro ao testar conexão SSH'
+        }, status=status.HTTP_200_OK)
 

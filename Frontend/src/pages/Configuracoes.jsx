@@ -13,13 +13,17 @@ import {
   Alert,
   CircularProgress,
 } from '@mui/material'
-import { Save as SaveIcon, Refresh as RefreshIcon } from '@mui/icons-material'
+import { Save as SaveIcon, Refresh as RefreshIcon, CheckCircle as CheckCircleIcon, Error as ErrorIcon } from '@mui/icons-material'
 import api from '../services/api'
 import { useSnackbar } from 'notistack'
 
 export default function Configuracoes() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [testingSsh, setTestingSsh] = useState(false)
+  const [testingMysql, setTestingMysql] = useState(false)
+  const [sshTestResult, setSshTestResult] = useState(null)
+  const [mysqlTestResult, setMysqlTestResult] = useState(null)
   const [sshConfig, setSshConfig] = useState({
     host: '',
     port: 22,
@@ -54,7 +58,7 @@ export default function Configuracoes() {
           username: data.ssh.username || '',
           use_key: data.ssh.use_key || false,
           key_path: data.ssh.key_path || '',
-          password: '', // Não preencher senha por segurança
+          password: data.ssh.has_password ? 'secret' : '', // Mostrar "secret" se senha existe
         })
       }
       
@@ -63,7 +67,7 @@ export default function Configuracoes() {
           host: data.mysql.host || '',
           port: data.mysql.port || 3306,
           user: data.mysql.user || '',
-          password: '', // Não preencher senha por segurança
+          password: data.mysql.has_password ? 'secret' : '', // Mostrar "secret" se senha existe
           database: data.mysql.database || '',
         })
       }
@@ -147,6 +151,10 @@ export default function Configuracoes() {
   }
 
   const handleSshChange = (field, value) => {
+    // Se o campo é password e o valor atual é "secret", limpar ao começar a digitar
+    if (field === 'password' && sshConfig.password === 'secret' && value !== 'secret' && value !== '') {
+      // Usuário começou a digitar uma nova senha, já está limpo
+    }
     setSshConfig((prev) => ({ ...prev, [field]: value }))
     // Limpar erro do campo
     if (errors[`ssh_${field}`]) {
@@ -159,6 +167,10 @@ export default function Configuracoes() {
   }
 
   const handleMysqlChange = (field, value) => {
+    // Se o campo é password e o valor atual é "secret", limpar ao começar a digitar
+    if (field === 'password' && mysqlConfig.password === 'secret' && value !== 'secret' && value !== '') {
+      // Usuário começou a digitar uma nova senha, já está limpo
+    }
     setMysqlConfig((prev) => ({ ...prev, [field]: value }))
     // Limpar erro do campo
     if (errors[`mysql_${field}`]) {
@@ -167,6 +179,94 @@ export default function Configuracoes() {
         delete newErrors[`mysql_${field}`]
         return newErrors
       })
+    }
+  }
+
+  const handleTestSsh = async () => {
+    // Primeiro salvar as configurações se houver mudanças
+    if (!validateForm()) {
+      enqueueSnackbar('Corrija os erros antes de testar', { variant: 'error' })
+      return
+    }
+
+    try {
+      setTestingSsh(true)
+      setSshTestResult(null)
+      
+      // Salvar configurações antes de testar
+      await api.saveConfig({
+        ssh: sshConfig,
+        mysql: mysqlConfig,
+      })
+      
+      // Recarregar serviços para aplicar novas configurações
+      await api.reloadServices()
+      
+      // Testar conexão SSH
+      const result = await api.testSshConnection()
+      setSshTestResult(result)
+      
+      if (result.ssh_connected) {
+        enqueueSnackbar('Conexão SSH bem-sucedida!', { variant: 'success' })
+      } else {
+        enqueueSnackbar(`Falha na conexão SSH: ${result.ssh_error || 'Erro desconhecido'}`, { 
+          variant: 'error',
+          autoHideDuration: 7000,
+        })
+      }
+    } catch (error) {
+      console.error('Erro ao testar conexão SSH:', error)
+      setSshTestResult({
+        ssh_connected: false,
+        ssh_error: error.message || 'Erro ao testar conexão',
+      })
+      enqueueSnackbar(`Erro ao testar conexão SSH: ${error.message}`, { variant: 'error' })
+    } finally {
+      setTestingSsh(false)
+    }
+  }
+
+  const handleTestMysql = async () => {
+    // Primeiro salvar as configurações se houver mudanças
+    if (!validateForm()) {
+      enqueueSnackbar('Corrija os erros antes de testar', { variant: 'error' })
+      return
+    }
+
+    try {
+      setTestingMysql(true)
+      setMysqlTestResult(null)
+      
+      // Salvar configurações antes de testar
+      await api.saveConfig({
+        ssh: sshConfig,
+        mysql: mysqlConfig,
+      })
+      
+      // Recarregar serviços para aplicar novas configurações
+      await api.reloadServices()
+      
+      // Testar conexão MySQL
+      const result = await api.testMysqlConnection()
+      setMysqlTestResult(result)
+      
+      if (result.mysql_connected) {
+        enqueueSnackbar('Conexão MySQL bem-sucedida!', { variant: 'success' })
+      } else {
+        enqueueSnackbar(`Falha na conexão MySQL: ${result.mysql_error || 'Erro desconhecido'}`, { 
+          variant: 'error',
+          autoHideDuration: 7000,
+        })
+      }
+    } catch (error) {
+      console.error('Erro ao testar conexão MySQL:', error)
+      setMysqlTestResult({
+        mysql_connected: false,
+        mysql_error: error.message || 'Erro ao testar conexão',
+      })
+      enqueueSnackbar(`Erro ao testar conexão MySQL: ${error.message}`, { variant: 'error' })
+    } finally {
+      setTestingMysql(false)
     }
   }
 
@@ -208,9 +308,9 @@ export default function Configuracoes() {
 
       <Grid container spacing={3}>
         {/* Configurações SSH */}
-        <Grid item xs={12} md={6}>
-          <Card>
-            <CardContent>
+        <Grid item xs={12} md={6} sx={{ display: 'flex' }}>
+          <Card sx={{ width: '100%', display: 'flex', flexDirection: 'column' }}>
+            <CardContent sx={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
               <Typography variant="h6" gutterBottom sx={{ color: '#F8FAFC', mb: 3 }}>
                 VM Linux Docker (SSH)
               </Typography>
@@ -278,21 +378,70 @@ export default function Configuracoes() {
                   label="Senha"
                   type="password"
                   value={sshConfig.password}
-                  onChange={(e) => handleSshChange('password', e.target.value)}
+                  onChange={(e) => {
+                    const newValue = e.target.value
+                    // Se está mostrando "secret" e usuário começou a digitar, limpar
+                    if (sshConfig.password === 'secret' && newValue.length > 0 && newValue !== 'secret') {
+                      handleSshChange('password', newValue.replace('secret', ''))
+                    } else {
+                      handleSshChange('password', newValue)
+                    }
+                  }}
+                  onFocus={(e) => {
+                    // Limpar "secret" quando o campo receber foco
+                    if (sshConfig.password === 'secret') {
+                      e.target.value = ''
+                      handleSshChange('password', '')
+                    }
+                  }}
                   error={!!errors.ssh_password}
-                  helperText={errors.ssh_password || 'Deixe em branco para não alterar'}
+                  helperText={errors.ssh_password || (sshConfig.password === 'secret' ? 'Senha configurada (digite nova senha para alterar)' : 'Deixe em branco para não alterar')}
+                  placeholder={sshConfig.password === 'secret' ? '••••••••' : ''}
                   sx={{ mb: 2 }}
                   variant="outlined"
                 />
               )}
+
+              {/* Espaçador para empurrar botão para baixo */}
+              <Box sx={{ flexGrow: 1 }} />
+
+              {/* Seção fixa na parte inferior */}
+              <Box sx={{ mt: 'auto' }}>
+                {/* Botão Testar Conexão SSH */}
+                <Button
+                  variant="outlined"
+                  color={sshTestResult?.ssh_connected ? 'success' : sshTestResult?.ssh_connected === false ? 'error' : 'primary'}
+                  onClick={handleTestSsh}
+                  disabled={testingSsh || saving}
+                  fullWidth
+                  startIcon={testingSsh ? <CircularProgress size={20} /> : sshTestResult?.ssh_connected ? <CheckCircleIcon /> : sshTestResult?.ssh_connected === false ? <ErrorIcon /> : null}
+                  sx={{ mb: 2 }}
+                >
+                  {testingSsh ? 'Testando...' : 'Testar Conexão SSH'}
+                </Button>
+
+                {/* Resultado do teste SSH */}
+                {sshTestResult && (
+                  <Alert 
+                    severity={sshTestResult.ssh_connected ? 'success' : 'error'}
+                    onClose={() => setSshTestResult(null)}
+                  >
+                    {sshTestResult.ssh_connected ? (
+                      'Conexão SSH bem-sucedida!'
+                    ) : (
+                      sshTestResult.ssh_error || 'Falha na conexão SSH'
+                    )}
+                  </Alert>
+                )}
+              </Box>
             </CardContent>
           </Card>
         </Grid>
 
         {/* Configurações MySQL */}
-        <Grid item xs={12} md={6}>
-          <Card>
-            <CardContent>
+        <Grid item xs={12} md={6} sx={{ display: 'flex' }}>
+          <Card sx={{ width: '100%', display: 'flex', flexDirection: 'column' }}>
+            <CardContent sx={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
               <Typography variant="h6" gutterBottom sx={{ color: '#F8FAFC', mb: 3 }}>
                 Database BWA (MySQL)
               </Typography>
@@ -337,8 +486,25 @@ export default function Configuracoes() {
                 label="Senha"
                 type="password"
                 value={mysqlConfig.password}
-                onChange={(e) => handleMysqlChange('password', e.target.value)}
-                helperText="Deixe em branco para não alterar"
+                onChange={(e) => {
+                  const newValue = e.target.value
+                  // Se está mostrando "secret" e usuário começou a digitar, limpar
+                  if (mysqlConfig.password === 'secret' && newValue.length > 0 && newValue !== 'secret') {
+                    handleMysqlChange('password', newValue.replace('secret', ''))
+                  } else {
+                    handleMysqlChange('password', newValue)
+                  }
+                }}
+                onFocus={(e) => {
+                  // Limpar "secret" quando o campo receber foco
+                  if (mysqlConfig.password === 'secret') {
+                    e.target.value = ''
+                    handleMysqlChange('password', '')
+                  }
+                }}
+                error={!!errors.mysql_password}
+                helperText={errors.mysql_password || (mysqlConfig.password === 'secret' ? 'Senha configurada (digite nova senha para alterar)' : 'Deixe em branco para não alterar')}
+                placeholder={mysqlConfig.password === 'secret' ? '••••••••' : ''}
                 sx={{ mb: 2 }}
                 variant="outlined"
               />
@@ -353,6 +519,39 @@ export default function Configuracoes() {
                 sx={{ mb: 2 }}
                 variant="outlined"
               />
+
+              {/* Espaçador para empurrar botão para baixo */}
+              <Box sx={{ flexGrow: 1 }} />
+
+              {/* Seção fixa na parte inferior */}
+              <Box sx={{ mt: 'auto' }}>
+                {/* Botão Testar Conexão MySQL */}
+                <Button
+                  variant="outlined"
+                  color={mysqlTestResult?.mysql_connected ? 'success' : mysqlTestResult?.mysql_connected === false ? 'error' : 'primary'}
+                  onClick={handleTestMysql}
+                  disabled={testingMysql || saving}
+                  fullWidth
+                  startIcon={testingMysql ? <CircularProgress size={20} /> : mysqlTestResult?.mysql_connected ? <CheckCircleIcon /> : mysqlTestResult?.mysql_connected === false ? <ErrorIcon /> : null}
+                  sx={{ mb: 2 }}
+                >
+                  {testingMysql ? 'Testando...' : 'Testar Conexão MySQL'}
+                </Button>
+
+                {/* Resultado do teste MySQL */}
+                {mysqlTestResult && (
+                  <Alert 
+                    severity={mysqlTestResult.mysql_connected ? 'success' : 'error'}
+                    onClose={() => setMysqlTestResult(null)}
+                  >
+                    {mysqlTestResult.mysql_connected ? (
+                      'Conexão MySQL bem-sucedida!'
+                    ) : (
+                      mysqlTestResult.mysql_error || 'Falha na conexão MySQL'
+                    )}
+                  </Alert>
+                )}
+              </Box>
             </CardContent>
           </Card>
         </Grid>

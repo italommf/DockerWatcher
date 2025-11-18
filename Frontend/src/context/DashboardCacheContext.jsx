@@ -533,7 +533,7 @@ export const DashboardCacheProvider = ({ children }) => {
         
         const newArmazenamento = [...prev.resourcesHistory.armazenamento, {
           time: now,
-          usado: resources.armazenamento.usada_gb,
+          usado: resources.armazenamento.usado_gb,
           livre: resources.armazenamento.livre_gb
         }].slice(-10)
         

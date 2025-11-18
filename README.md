@@ -1,26 +1,53 @@
-# Docker Watcher - Aplicativo Desktop
+# Docker Watcher
 
-Aplicativo desktop Windows para gerenciar remotamente robôs RPA, jobs Kubernetes, cronjobs e deployments em um servidor Linux via SSH.
+Aplicativo desktop para gerenciar remotamente robôs RPA, jobs Kubernetes, cronjobs e deployments em um servidor Linux via SSH.
 
-## Arquitetura
+## 📋 Índice
 
-- **Frontend**: React + Electron (interface moderna)
-- **Backend**: Django + Django REST Framework (API REST)
-- **Comunicação Remota**: SSH/SFTP para executar kubectl e gerenciar arquivos
-- **Banco de Dados**: MySQL remoto
-- **Empacotamento**: Electron Builder (executável único .exe)
+- [Sobre o Projeto](#sobre-o-projeto)
+- [Arquitetura](#arquitetura)
+- [Funcionalidades](#funcionalidades)
+- [Instalação](#instalação)
+- [Configuração](#configuração)
+- [Tutorial de Uso](#tutorial-de-uso)
+- [Desenvolvimento](#desenvolvimento)
+- [Build](#build)
+- [Tecnologias](#tecnologias)
 
-## Estrutura do Projeto
+## 🎯 Sobre o Projeto
+
+O Docker Watcher é uma aplicação desktop desenvolvida para facilitar o gerenciamento de automações RPA (Robotic Process Automation) executadas em um cluster Kubernetes. A aplicação permite monitorar e controlar remotamente:
+
+- **Robôs RPA**: Gerenciar configurações, ativar/desativar e monitorar execuções
+- **Jobs Kubernetes**: Visualizar e gerenciar jobs em execução
+- **Cronjobs**: Criar e gerenciar tarefas agendadas
+- **Deployments**: Gerenciar deployments Kubernetes
+- **Recursos da VM**: Monitorar CPU, memória e armazenamento em tempo real
+
+## 🏗️ Arquitetura
 
 ```
 Docker Watcher/
 ├── backend/                 # Backend Django
 │   ├── docker_watcher/      # Configurações Django
 │   ├── api/                 # API REST
-│   ├── services/            # Serviços (SSH, K8s, DB, Watcher)
+│   │   ├── views/           # ViewSets e endpoints
+│   │   ├── models.py        # Modelos do banco de dados
+│   │   └── serializers/     # Serializers da API
+│   ├── services/            # Serviços de negócio
+│   │   ├── kubernetes_service.py    # Operações Kubernetes
+│   │   ├── ssh_service.py           # Conexão SSH
+│   │   ├── database_service.py      # Conexão MySQL
+│   │   ├── cache_service.py         # Sistema de cache
+│   │   ├── polling_service.py       # Polling de dados
+│   │   └── vm_resource_service.py   # Métricas da VM
 │   └── config/              # Configurações
 ├── Frontend/                # Frontend React + Electron
-│   ├── src/                 # Código React
+│   ├── src/
+│   │   ├── pages/           # Páginas da aplicação
+│   │   ├── components/      # Componentes reutilizáveis
+│   │   ├── context/         # Context API (cache)
+│   │   └── services/        # Serviços de API
 │   ├── electron/            # Electron main process
 │   └── public/              # Arquivos estáticos
 ├── shared/                  # Arquivos compartilhados
@@ -29,92 +56,182 @@ Docker Watcher/
 └── README.md
 ```
 
-## Instalação
+### Fluxo de Dados
 
-### Desenvolvimento
+1. **Frontend (React)**: Interface do usuário que consome a API REST
+2. **Backend (Django)**: API REST que processa requisições
+3. **Serviços**: Executam operações remotas via SSH
+4. **Kubernetes**: Cluster onde os recursos são gerenciados
+5. **MySQL**: Banco de dados remoto para execuções pendentes
+6. **Cache**: Sistema de cache para otimizar performance
 
-1. **Backend:**
+## ✨ Funcionalidades
+
+### Dashboard
+- **Estatísticas em tempo real**: Jobs ativos, execuções pendentes, falhas
+- **Gráficos de recursos**: Monitoramento de CPU, memória e armazenamento
+- **Tabela de robôs em execução**: Lista todos os containers rodando
+- **Atualização automática**: Dados atualizados a cada 5 segundos
+
+### Containers Rodando (Jobs)
+- Visualização em cards compactos
+- Barra de pesquisa para filtrar por nome
+- Visualizar logs em tempo real
+- Parar instâncias individuais
+
+### RPAs (Robôs)
+- Gerenciar configurações de robôs
+- Ativar/desativar (standby)
+- Monitorar execuções pendentes
+- Visualizar instâncias ativas
+- Cards com barra de pesquisa
+
+### Cronjobs
+- Criar cronjobs agendados
+- Executar manualmente
+- Suspender/reativar
+- Visualizar histórico de execuções
+- Cards com barra de pesquisa
+
+### Deployments
+- Gerenciar deployments Kubernetes
+- Monitorar réplicas
+- Cards com barra de pesquisa
+
+## 🚀 Instalação
+
+### Pré-requisitos
+
+- **Python 3.8+**
+- **Node.js 18+**
+- **Acesso SSH** ao servidor Linux com kubectl instalado
+- **MySQL remoto** acessível
+- **Credenciais SSH** (chave privada ou senha)
+
+### Instalação do Backend
+
 ```bash
+# Navegar para o diretório do backend
 cd backend
+
+# Instalar dependências Python
 pip install -r requirements.txt
+
+# Executar migrações do banco de dados
 python manage.py migrate
+
+# (Opcional) Criar superusuário para admin Django
+python manage.py createsuperuser
 ```
 
-2. **Frontend:**
+### Instalação do Frontend
+
 ```bash
+# Navegar para o diretório do frontend
 cd Frontend
+
+# Instalar dependências Node.js
 npm install
 ```
 
-3. **Configurar `shared/config.ini`:**
+## ⚙️ Configuração
+
+### Arquivo `shared/config.ini`
+
+Crie ou edite o arquivo `shared/config.ini` com suas configurações:
+
 ```ini
 [SSH]
-host = 192.168.1.36
+# Endereço IP ou hostname do servidor Linux
+host = seu_servidor.com
+# Porta SSH (padrão: 22)
 port = 22
-username = rpa_user
+# Usuário SSH
+username = seu_usuario
+# Usar chave privada (true) ou senha (false)
 use_key = true
-key_path = path/to/key
+# Caminho para a chave privada SSH (se use_key = true)
+key_path = C:/caminho/para/sua/chave/id_rsa
+# Senha SSH (se use_key = false)
 password = 
 
 [MySQL]
-host = 192.168.1.36
+# Endereço do servidor MySQL
+host = seu_servidor.com
+# Porta MySQL (padrão: 3306)
 port = 3306
-user = rpa
-password = sua_senha
-database = bwav4
+# Usuário MySQL
+user = seu_usuario_mysql
+# Senha MySQL
+password = sua_senha_mysql
+# Nome do banco de dados
+database = nome_do_banco
 
 [PATHS]
+# Caminho absoluto no servidor onde ficam os arquivos de configuração dos RPAs
 rpa_config_path = /caminho/absoluto/rpa_config
+# Caminho absoluto no servidor onde ficam os arquivos YAML dos cronjobs
 cronjobs_path = /caminho/absoluto/cronjobs
+# Caminho absoluto no servidor onde ficam os arquivos YAML dos deployments
 deployments_path = /caminho/absoluto/deployments
 
 [API]
+# Porta onde a API Django será executada
 port = 8000
+# Host da API (127.0.0.1 para localhost)
 host = 127.0.0.1
 ```
 
-4. **Rodar:**
+### Configuração SSH
 
-**Backend (em um terminal):**
+#### Opção 1: Usando Chave Privada (Recomendado)
+
+1. Gere um par de chaves SSH (se ainda não tiver):
+```bash
+ssh-keygen -t rsa -b 4096
+```
+
+2. Copie a chave pública para o servidor:
+```bash
+ssh-copy-id usuario@servidor.com
+```
+
+3. Configure no `config.ini`:
+```ini
+[SSH]
+use_key = true
+key_path = C:/caminho/para/sua/chave/id_rsa
+```
+
+#### Opção 2: Usando Senha
+
+```ini
+[SSH]
+use_key = false
+password = sua_senha_ssh
+```
+
+## 📖 Tutorial de Uso
+
+### 1. Iniciando a Aplicação
+
+#### Modo Desenvolvimento
+
+**Terminal 1 - Backend:**
 ```bash
 cd backend
 python manage.py runserver 127.0.0.1:8000
 ```
 
-**Frontend (em outro terminal):**
+**Terminal 2 - Frontend:**
 ```bash
 cd Frontend
 npm run dev
 ```
 
-> **Nota:** 
-> - O backend e o frontend devem ser iniciados separadamente
-> - O WatcherService será iniciado automaticamente quando o Django estiver pronto (após ~5 segundos)
-> - Não é necessário iniciar nada manualmente além desses dois comandos
+A aplicação estará disponível em `http://localhost:5173` (ou a porta que o Vite indicar).
 
-## Funcionalidades
-
-### Backend Django
-
-- **Jobs**: Listar, criar, deletar jobs Kubernetes
-- **RPAs**: Gerenciar RPAs (criar, editar, deletar, standby/ativar)
-- **Cronjobs**: Gerenciar cronjobs (criar, deletar, executar manualmente, suspender/reativar)
-- **Deployments**: Gerenciar deployments Kubernetes
-- **Pods**: Listar pods, obter logs, deletar pods
-- **Executions**: Listar execuções pendentes do banco de dados
-- **Watcher**: Loop automático em background que verifica execuções e cria jobs
-
-### Frontend React
-
-- **Dashboard**: Estatísticas gerais (jobs rodando, execuções pendentes, erros)
-- **Jobs**: Lista de jobs com status detalhado
-- **RPAs**: Gerenciar RPAs (criar, editar, standby/ativar)
-- **Cronjobs**: Gerenciar cronjobs (criar, executar manualmente, suspender/reativar)
-- **Deployments**: Gerenciar deployments
-
-## Build
-
-### Gerar Executável
+#### Modo Produção (Executável)
 
 ```bash
 cd Frontend
@@ -123,58 +240,224 @@ npm run package
 
 O executável será gerado em `Frontend/out/` ou `Frontend/dist/`.
 
-## Tecnologias
+### 2. Primeira Conexão
 
-### Frontend
-- React 18
-- Vite
-- Material-UI
-- Axios
-- Electron
-- electron-builder
+1. Abra a aplicação
+2. A aplicação tentará conectar automaticamente ao servidor
+3. Verifique o status da conexão no canto superior direito
+4. Se houver erro, verifique:
+   - Credenciais SSH no `config.ini`
+   - Acessibilidade do servidor
+   - Permissões da chave SSH
 
-### Backend
-- Django 4.2
-- Django REST Framework
-- Paramiko (SSH)
-- mysql-connector-python
-- PyYAML
+### 3. Navegando pelo Dashboard
 
-## Requisitos
+O **Dashboard** é a página inicial e mostra:
 
-- Python 3.8+
-- Node.js 18+
-- Acesso SSH ao servidor Linux com kubectl instalado
-- MySQL remoto acessível
-- Credenciais SSH (chave ou senha)
+- **Cards de Estatísticas**: 
+  - Instâncias Ativas
+  - Execuções Pendentes
+  - Falhas de Containers
+  - RPAs Ativos
+  - Cronjobs Ativos
 
-## Desenvolvimento
+- **Gráficos de Recursos da VM**:
+  - Memória RAM (GB)
+  - Armazenamento (GB)
+  - CPU (%)
+  - Histórico dos últimos 10 pontos
 
-### API Endpoints
+- **Tabela de Robôs em Execução**: Lista todos os containers ativos
 
-- `GET /api/jobs/` - Lista jobs
+### 4. Gerenciando Containers Rodando
+
+1. Acesse **"Containers Rodando"** no menu lateral
+2. Use a **barra de pesquisa** para filtrar por nome
+3. Para cada container você pode:
+   - **Ver Logs**: Visualizar logs em tempo real
+   - **Parar Instância**: Parar o container atual
+   - **Parar e Inativar**: Parar e desativar o recurso (RPA/Cronjob/Deployment)
+
+### 5. Gerenciando RPAs
+
+1. Acesse **"RPAs"** no menu lateral
+2. Use a **barra de pesquisa** para encontrar um RPA específico
+3. **Criar RPA**:
+   - Clique em "Adicionar RPA"
+   - Preencha os dados (nome, docker tag, limites, etc.)
+   - Salve
+
+4. **Gerenciar RPA existente**:
+   - **Standby/Ativar**: Use o switch para pausar ou ativar
+   - **Editar**: Modificar configurações
+   - **Deletar**: Remover o RPA
+
+### 6. Gerenciando Cronjobs
+
+1. Acesse **"Cronjobs"** no menu lateral
+2. Use a **barra de pesquisa** para filtrar
+3. **Criar Cronjob**:
+   - Clique em "Adicionar Cronjob"
+   - Preencha:
+     - **Nome**: Nome único do cronjob
+     - **Schedule**: Expressão Cron (ex: `0 18 1 * *` = dia 1 de cada mês às 18:00)
+     - **Timezone**: Fuso horário (padrão: America/Sao_Paulo)
+     - **Nome do Robô**: Nome do robô que será executado
+     - **Docker Image**: Imagem Docker completa
+     - **Limite de Memória**: Ex: 256Mi, 512Mi, 1Gi
+   - Salve
+
+4. **Gerenciar Cronjob existente**:
+   - **Executar Agora**: Executa manualmente
+   - **Suspender/Reativar**: Use o switch
+   - **Editar**: Modificar configurações
+   - **Deletar**: Remover o cronjob
+
+> **Nota**: Os cronjobs são criados diretamente no Kubernetes e continuam funcionando mesmo com a aplicação fechada.
+
+### 7. Gerenciando Deployments
+
+1. Acesse **"Deployments"** no menu lateral
+2. Use a **barra de pesquisa** para filtrar
+3. Visualize réplicas e status
+4. Edite ou delete deployments conforme necessário
+
+### 8. Visualizando Logs
+
+1. Em **"Containers Rodando"**, clique em **"Ver Logs"**
+2. Ajuste o número de linhas (padrão: 100)
+3. Clique em **"Atualizar Logs"** para recarregar
+4. Os logs são exibidos em tempo real
+
+### 9. Monitoramento de Recursos
+
+No **Dashboard**, os gráficos de recursos são atualizados automaticamente:
+
+- **Linhas coloridas**: 
+  - 🟢 Verde: Uso < 80%
+  - 🟡 Amarelo: Uso entre 80-90%
+  - 🔴 Vermelho: Uso > 90%
+
+- **Histórico**: Últimos 10 pontos de coleta
+- **Hover**: Passe o mouse sobre o gráfico para ver valores detalhados
+
+## 🔧 Desenvolvimento
+
+### Estrutura da API
+
+#### Endpoints Principais
+
+**Jobs:**
+- `GET /api/jobs/` - Lista jobs ativos
 - `POST /api/jobs/` - Cria job manualmente
 - `DELETE /api/jobs/{name}/` - Deleta job
-- `GET /api/jobs/status/` - Resumo de status por RPA
+- `GET /api/jobs/status/` - Status por RPA
+
+**RPAs:**
 - `GET /api/rpas/` - Lista RPAs
 - `POST /api/rpas/` - Cria RPA
 - `PUT /api/rpas/{name}/` - Atualiza RPA
 - `DELETE /api/rpas/{name}/` - Deleta RPA
 - `POST /api/rpas/{name}/standby/` - Move para standby
 - `POST /api/rpas/{name}/activate/` - Ativa de standby
+
+**Cronjobs:**
 - `GET /api/cronjobs/` - Lista cronjobs
-- `POST /api/cronjobs/` - Cria cronjob
-- `POST /api/cronjobs/{name}/run_now/` - Executa cronjob manualmente
+- `POST /api/cronjobs/` - Cria cronjob no Kubernetes
+- `DELETE /api/cronjobs/{name}/` - Deleta cronjob
+- `POST /api/cronjobs/{name}/run_now/` - Executa manualmente
 - `POST /api/cronjobs/{name}/standby/` - Suspende cronjob
 - `POST /api/cronjobs/{name}/activate/` - Reativa cronjob
-- `GET /api/executions/` - Lista execuções pendentes
+
+**Deployments:**
+- `GET /api/deployments/` - Lista deployments
+- `POST /api/deployments/` - Cria deployment
+- `DELETE /api/deployments/{name}/` - Deleta deployment
+
+**Pods:**
 - `GET /api/pods/` - Lista pods
 - `GET /api/pods/{name}/logs/` - Obtém logs de pod
+
+**Recursos:**
+- `GET /api/resources/vm/` - Recursos da VM (CPU, RAM, Storage)
+
+**Conexão:**
 - `GET /api/connection/status/` - Status de conexão SSH/MySQL
+- `GET /api/connection/ssh/` - Testa conexão SSH
+- `GET /api/connection/mysql/` - Testa conexão MySQL
+- `POST /api/connection/reload/` - Recarrega serviços
 
-## Notas
+### Sistema de Cache
 
-- O watcher roda automaticamente em background quando o backend é iniciado
-- Todas as operações são executadas remotamente via SSH
-- Os arquivos de configuração (JSON/YAML) são gerenciados via SFTP no servidor Linux
-- O Electron inicia o backend Django automaticamente quando o app é executado
+A aplicação utiliza um sistema de cache em múltiplas camadas:
+
+1. **Cache do Backend**: Armazena dados do Kubernetes e MySQL
+2. **Cache do Frontend**: Context API para dados do dashboard
+3. **Polling Service**: Atualiza cache automaticamente a cada 5 segundos
+
+### Serviços em Background
+
+- **PollingService**: Atualiza dados do Kubernetes e MySQL periodicamente
+- **WatcherService**: Monitora execuções pendentes e cria jobs automaticamente
+
+## 📦 Build
+
+### Gerar Executável Windows
+
+```bash
+cd Frontend
+npm run package
+```
+
+O executável será gerado em:
+- `Frontend/out/` (modo desenvolvimento)
+- `Frontend/dist/` (modo produção)
+
+### Build do Backend
+
+O backend Django é empacotado junto com o Electron, não é necessário build separado.
+
+## 🛠️ Tecnologias
+
+### Frontend
+- **React 18**: Biblioteca UI
+- **Vite**: Build tool e dev server
+- **Material-UI (MUI)**: Componentes de interface
+- **Axios**: Cliente HTTP
+- **Electron**: Framework desktop
+- **electron-builder**: Empacotamento
+
+### Backend
+- **Django 4.2**: Framework web
+- **Django REST Framework**: API REST
+- **Paramiko**: Cliente SSH
+- **mysql-connector-python**: Conexão MySQL
+- **PyYAML**: Processamento YAML
+
+## 📝 Notas Importantes
+
+- ⚠️ **Cronjobs**: São criados diretamente no Kubernetes e continuam funcionando mesmo com a aplicação fechada
+- 🔄 **Atualização Automática**: Dados são atualizados a cada 5 segundos em background
+- 🔐 **Segurança**: Mantenha o arquivo `config.ini` seguro e não o commite no git
+- 📊 **Cache**: O sistema usa cache para otimizar performance e reduzir chamadas ao servidor
+- 🚀 **Performance**: A aplicação foi otimizada para trabalhar com grandes volumes de dados
+
+## 🤝 Contribuindo
+
+1. Faça um fork do projeto
+2. Crie uma branch para sua feature (`git checkout -b feature/AmazingFeature`)
+3. Commit suas mudanças (`git commit -m 'Add some AmazingFeature'`)
+4. Push para a branch (`git push origin feature/AmazingFeature`)
+5. Abra um Pull Request
+
+## 📄 Licença
+
+Este projeto é privado e de uso interno.
+
+## 👥 Autores
+
+- **Equipe de Desenvolvimento**
+
+---
+
+**Última atualização**: 2025-01-18

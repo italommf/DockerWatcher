@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import {
   Box,
   Typography,
@@ -11,47 +11,75 @@ import {
   FormControlLabel,
   CircularProgress,
   Alert,
+  TextField,
+  InputAdornment,
 } from '@mui/material'
-import { Add, Edit, Delete } from '@mui/icons-material'
-import api from '../services/api'
+import { Add, Edit, Delete, Search as SearchIcon } from '@mui/icons-material'
 import { useSnackbar } from 'notistack'
+import api from '../services/api'
+import { useDashboardCache } from '../context/DashboardCacheContext'
 
 export default function RPAs({ isConnected = true, onReconnect }) {
   const [rpas, setRPAs] = useState([])
-  const [loading, setLoading] = useState(true)
+  const [searchTerm, setSearchTerm] = useState('')
   const { enqueueSnackbar } = useSnackbar()
+  const { cachedData, loadDashboardData } = useDashboardCache()
+  const [loading, setLoading] = useState(true)
+
+  // Filtrar RPAs baseado no termo de pesquisa
+  const filteredRPAs = useMemo(() => {
+    if (!searchTerm.trim()) {
+      return rpas
+    }
+    const term = searchTerm.toLowerCase()
+    return rpas.filter(rpa => 
+      rpa.nome_rpa?.toLowerCase().includes(term) ||
+      rpa.docker_tag?.toLowerCase().includes(term) ||
+      rpa.apelido?.toLowerCase().includes(term)
+    )
+  }, [rpas, searchTerm])
 
   useEffect(() => {
-    if (isConnected) {
-      loadRPAs()
-      const interval = setInterval(() => {
-        if (isConnected) loadRPAs()
-      }, 10000)
-      return () => clearInterval(interval)
-    } else {
+    // Sempre que o cache for atualizado, refletir instantaneamente
+    // Garantir que rpas é sempre um array válido
+    const rpasArray = (cachedData?.rpas && Array.isArray(cachedData.rpas)) ? cachedData.rpas : []
+    setRPAs(rpasArray)
+    if (cachedData?.rpas !== undefined) {
       setLoading(false)
+    }
+  }, [cachedData?.rpas])
+
+  useEffect(() => {
+    if (!isConnected) {
+      setLoading(false)
+      return
+    }
+
+    // Se ainda não temos dados no cache, solicitar atualização (não bloqueia UI)
+    if (!cachedData?.rpas || cachedData.rpas.length === 0) {
+      loadDashboardData(true).catch((error) => {
+        console.error('Erro ao carregar RPAs:', error)
+        enqueueSnackbar(`Erro ao carregar RPAs: ${error.message}`, { variant: 'error' })
+      })
     }
   }, [isConnected])
 
-  const loadRPAs = async () => {
-    if (!isConnected) return // Não tentar carregar se desconectado
-    
-    try {
-      setLoading(true)
-      const data = await api.getRPAs()
-      setRPAs(Array.isArray(data) ? data : [])
-    } catch (error) {
-      console.error('Erro ao carregar RPAs:', error)
-      // Não limpar rpas em caso de erro - manter cache
-      if (isConnected) {
-        enqueueSnackbar(`Erro ao carregar RPAs: ${error.message}`, { variant: 'error' })
-      }
-    } finally {
-      setLoading(false)
-    }
-  }
-
   const handleToggleStandby = async (rpa) => {
+    // Atualização otimista: atualizar UI imediatamente
+    // Garantir que rpas é um array antes de usar .map()
+    if (!Array.isArray(rpas)) {
+      console.warn('rpas não é um array, não é possível atualizar')
+      return
+    }
+    
+    const novoStatus = rpa.status === 'standby' ? 'active' : 'standby'
+    const rpasAtualizados = rpas.map(r => 
+      r.nome_rpa === rpa.nome_rpa 
+        ? { ...r, status: novoStatus }
+        : r
+    )
+    setRPAs(rpasAtualizados)
+    
     try {
       if (rpa.status === 'standby') {
         await api.rpaActivate(rpa.nome_rpa)
@@ -60,8 +88,14 @@ export default function RPAs({ isConnected = true, onReconnect }) {
         await api.rpaStandby(rpa.nome_rpa)
         enqueueSnackbar('RPA movido para standby', { variant: 'success' })
       }
-      loadRPAs()
+      // Cache será atualizado automaticamente pelo PollingService em background
+      // Não é necessário aguardar - a UI já foi atualizada otimisticamente
     } catch (error) {
+      // Reverter atualização otimista em caso de erro
+      // Garantir que rpas é um array antes de reverter
+      if (Array.isArray(rpas)) {
+        setRPAs(rpas)
+      }
       enqueueSnackbar(`Erro: ${error.message}`, { variant: 'error' })
     }
   }
@@ -76,7 +110,7 @@ export default function RPAs({ isConnected = true, onReconnect }) {
     try {
       await api.deleteRPA(rpa.nome_rpa)
       enqueueSnackbar('RPA deletado com sucesso', { variant: 'success' })
-      loadRPAs()
+      await loadDashboardData(true)
     } catch (error) {
       enqueueSnackbar(`Erro: ${error.message}`, { variant: 'error' })
     }
@@ -125,93 +159,172 @@ export default function RPAs({ isConnected = true, onReconnect }) {
         </Alert>
       )}
 
-      <Grid container spacing={3}>
-        {rpas.length === 0 ? (
+      {/* Barra de pesquisa */}
+      <Box sx={{ mb: 3 }}>
+        <TextField
+          fullWidth
+          placeholder="Pesquisar por nome do RPA, docker tag ou apelido..."
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          InputProps={{
+            startAdornment: (
+              <InputAdornment position="start">
+                <SearchIcon sx={{ color: '#CBD5E1' }} />
+              </InputAdornment>
+            ),
+          }}
+          sx={{
+            '& .MuiOutlinedInput-root': {
+              backgroundColor: 'rgba(30, 41, 59, 0.5)',
+              '& fieldset': {
+                borderColor: 'rgba(255, 255, 255, 0.1)',
+              },
+              '&:hover fieldset': {
+                borderColor: 'rgba(255, 255, 255, 0.2)',
+              },
+              '&.Mui-focused fieldset': {
+                borderColor: 'rgba(99, 102, 241, 0.5)',
+              },
+            },
+            '& .MuiInputBase-input': {
+              color: '#F8FAFC',
+            },
+          }}
+        />
+      </Box>
+
+      <Grid container spacing={2}>
+        {!Array.isArray(filteredRPAs) || filteredRPAs.length === 0 ? (
           <Grid item xs={12}>
             <Card>
               <CardContent>
                 <Typography variant="body1" color="text.secondary" align="center">
-                  Nenhum RPA encontrado
+                  {searchTerm ? 'Nenhum RPA encontrado com o termo pesquisado' : 'Nenhum RPA encontrado'}
                 </Typography>
               </CardContent>
             </Card>
           </Grid>
         ) : (
-          rpas.map((rpa) => (
-            <Grid item xs={12} key={rpa.nome_rpa}>
-              <Card>
-                <Box
-                  sx={{
-                    borderLeft: `4px solid ${rpa.status === 'standby' ? '#F59E0B' : '#10B981'}`,
-                  }}
-                >
-                  <CardContent>
-                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2 }}>
-                      <Box>
-                        <Typography variant="h6" gutterBottom>
-                          {rpa.nome_rpa || 'N/A'}
-                        </Typography>
-                        <Chip
-                          label={rpa.status === 'standby' ? 'Standby' : 'Ativo'}
-                          color={rpa.status === 'standby' ? 'warning' : 'success'}
+          filteredRPAs.map((rpa) => (
+            <Grid item xs={12} sm={6} md={4} lg={3} key={rpa.nome_rpa}>
+              <Card 
+                sx={{ 
+                  height: '100%',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  backgroundColor: 'rgba(30, 41, 59, 0.5)',
+                  border: '1px solid rgba(255, 255, 255, 0.1)',
+                  borderLeft: `4px solid ${rpa.status === 'standby' ? '#F59E0B' : '#10B981'}`,
+                  transition: 'all 0.2s',
+                  '&:hover': {
+                    borderColor: 'rgba(255, 255, 255, 0.2)',
+                    transform: 'translateY(-2px)',
+                    boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
+                  },
+                }}
+              >
+                <CardContent sx={{ p: 2, flex: 1, display: 'flex', flexDirection: 'column' }}>
+                  {/* Nome e Status */}
+                  <Box sx={{ mb: 1.5 }}>
+                    <Typography 
+                      variant="h6" 
+                      sx={{ 
+                        mb: 1, 
+                        fontSize: '0.95rem',
+                        fontWeight: 600,
+                        color: '#F8FAFC',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      }}
+                      title={rpa.nome_rpa || 'N/A'}
+                    >
+                      {rpa.apelido || rpa.nome_rpa || 'N/A'}
+                    </Typography>
+                    <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center', flexWrap: 'wrap' }}>
+                      <Chip 
+                        label={rpa.status === 'standby' ? 'Standby' : 'Ativo'} 
+                        color={rpa.status === 'standby' ? 'warning' : 'success'} 
+                        size="small" 
+                        sx={{ fontSize: '0.7rem', height: 20 }}
+                      />
+                    </Box>
+                  </Box>
+
+                  {/* Informações compactas */}
+                  <Box sx={{ flex: 1, mb: 1.5 }}>
+                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
+                      <strong>RPA:</strong> {rpa.nome_rpa || 'N/A'}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
+                      <strong>Docker:</strong> {rpa.docker_tag || 'latest'}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
+                      <strong>RAM:</strong> {rpa.qtd_ram_maxima || 0}MB
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
+                      <strong>Instâncias:</strong> {rpa.jobs_ativos || 0}/{rpa.qtd_max_instancias || 0}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+                      <strong>Pendentes:</strong> {rpa.execucoes_pendentes || 0}
+                    </Typography>
+                  </Box>
+
+                  {/* Botões */}
+                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, mt: 'auto' }}>
+                    <FormControlLabel
+                      control={
+                        <Switch
+                          checked={rpa.status === 'standby'}
+                          onChange={() => handleToggleStandby(rpa)}
                           size="small"
                         />
-                      </Box>
-                    </Box>
-                    <Grid container spacing={2} sx={{ mb: 2 }}>
-                      <Grid item xs={12} sm={6} md={3}>
-                        <Typography variant="body2" color="text.secondary">
-                          Docker Tag:
-                        </Typography>
-                        <Typography variant="body2">{rpa.docker_tag || 'latest'}</Typography>
-                      </Grid>
-                      <Grid item xs={12} sm={6} md={3}>
-                        <Typography variant="body2" color="text.secondary">
-                          RAM Máxima:
-                        </Typography>
-                        <Typography variant="body2">{rpa.qtd_ram_maxima || 0}MB</Typography>
-                      </Grid>
-                      <Grid item xs={12} sm={6} md={3}>
-                        <Typography variant="body2" color="text.secondary">
-                          Instâncias Máx:
-                        </Typography>
-                        <Typography variant="body2">
-                          {rpa.jobs_ativos || 0}/{rpa.qtd_max_instancias || 0}
-                        </Typography>
-                      </Grid>
-                      <Grid item xs={12} sm={6} md={3}>
-                        <Typography variant="body2" color="text.secondary">
-                          Execuções Pendentes:
-                        </Typography>
-                        <Typography variant="body2">{rpa.execucoes_pendentes || 0}</Typography>
-                      </Grid>
-                    </Grid>
-                    <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
-                      <FormControlLabel
-                        control={
-                          <Switch
-                            checked={rpa.status === 'standby'}
-                            onChange={() => handleToggleStandby(rpa)}
-                          />
-                        }
-                        label="Standby"
-                      />
-                      <Box sx={{ flexGrow: 1 }} />
-                      <Button variant="outlined" size="small" startIcon={<Edit />} onClick={() => handleEdit(rpa)}>
+                      }
+                      label={<Typography variant="caption">Standby</Typography>}
+                      sx={{ m: 0 }}
+                    />
+                    <Box sx={{ display: 'flex', gap: 1 }}>
+                      <Button
+                        variant="outlined"
+                        size="small"
+                        fullWidth
+                        startIcon={<Edit />}
+                        onClick={() => handleEdit(rpa)}
+                        sx={{ 
+                          fontSize: '0.75rem',
+                          py: 0.5,
+                          borderColor: 'rgba(255, 255, 255, 0.2)',
+                          color: '#CBD5E1',
+                          '&:hover': {
+                            borderColor: 'rgba(99, 102, 241, 0.5)',
+                            backgroundColor: 'rgba(99, 102, 241, 0.1)',
+                          },
+                        }}
+                      >
                         Editar
                       </Button>
                       <Button
                         variant="outlined"
-                        size="small"
                         color="error"
+                        size="small"
+                        fullWidth
                         startIcon={<Delete />}
                         onClick={() => handleDelete(rpa)}
+                        sx={{ 
+                          fontSize: '0.75rem',
+                          py: 0.5,
+                          borderColor: 'rgba(239, 68, 68, 0.3)',
+                          '&:hover': {
+                            borderColor: 'rgba(239, 68, 68, 0.5)',
+                            backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                          },
+                        }}
                       >
                         Deletar
                       </Button>
                     </Box>
-                  </CardContent>
-                </Box>
+                  </Box>
+                </CardContent>
               </Card>
             </Grid>
           ))

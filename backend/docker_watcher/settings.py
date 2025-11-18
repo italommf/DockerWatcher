@@ -33,6 +33,7 @@ MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'corsheaders.middleware.CorsMiddleware',
+    'docker_watcher.middleware.RequestLoggingMiddleware',  # Middleware customizado para rastreamento
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
@@ -149,6 +150,11 @@ LOGGING = {
         'backend': {
             'handlers': ['console'],
             'level': 'DEBUG',
+            'propagate': False,
+        },
+        'django_watcher': {
+            'handlers': ['console'],
+            'level': 'INFO',
             'propagate': False,
         },
     },

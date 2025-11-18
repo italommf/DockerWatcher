@@ -1,6 +1,7 @@
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from backend.services.cache_service import CacheKeys, CacheService
 from backend.services.service_manager import get_kubernetes_service
 from api.serializers.models import PodSerializer, PodLogsSerializer
 import logging
@@ -23,14 +24,22 @@ class PodViewSet(viewsets.ViewSet):
         if rpa_name:
             label_selector = f"nome_robo={rpa_name.lower()}"
         
-        pods = self.k8s_service.get_pods(label_selector)
+        pods = CacheService.get_data(CacheKeys.PODS, []) or []
+        if not pods:
+            pods = self.k8s_service.get_pods()
+            CacheService.update(CacheKeys.PODS, pods)
+        if label_selector:
+            pods = self._filter_by_label(pods, label_selector)
         
         serializer = PodSerializer(pods, many=True)
         return Response(serializer.data)
     
     def retrieve(self, request, pk=None):
         """Obtém detalhes de um pod específico."""
-        pods = self.k8s_service.get_pods()
+        pods = CacheService.get_data(CacheKeys.PODS, []) or []
+        if not pods:
+            pods = self.k8s_service.get_pods()
+            CacheService.update(CacheKeys.PODS, pods)
         pod = next((p for p in pods if p['name'] == pk), None)
         
         if not pod:
@@ -61,4 +70,17 @@ class PodViewSet(viewsets.ViewSet):
         
         serializer = PodLogsSerializer({'logs': logs})
         return Response(serializer.data)
+
+    def _filter_by_label(self, pods, label_selector: str):
+        if not label_selector or '=' not in label_selector:
+            return pods
+        key, value = [part.strip() for part in label_selector.split('=', 1)]
+        if not key:
+            return pods
+        filtered = []
+        for pod in pods:
+            labels = pod.get('labels', {}) if isinstance(pod, dict) else {}
+            if labels.get(key) == value:
+                filtered.append(pod)
+        return filtered
 

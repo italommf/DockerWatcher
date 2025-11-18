@@ -2,10 +2,8 @@ import logging
 import threading
 import time
 from typing import Dict, List
-from backend.services.service_manager import (
-    get_kubernetes_service,
-    get_database_service
-)
+from backend.services.cache_service import CacheKeys, CacheService
+from backend.services.service_manager import get_kubernetes_service
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +28,6 @@ class WatcherService:
         try:
             # Usar serviços singleton para evitar reconexões constantes
             self.k8s_service = get_kubernetes_service()
-            self.db_service = get_database_service()
         except Exception as e:
             logger.warning(f"Erro ao inicializar serviços do watcher: {e}")
             # Ainda assim tentar criar os serviços (podem estar parcialmente funcionais)
@@ -38,10 +35,6 @@ class WatcherService:
                 self.k8s_service = get_kubernetes_service()
             except:
                 self.k8s_service = None
-            try:
-                self.db_service = get_database_service()
-            except:
-                self.db_service = None
         
         self._running = False
         self._thread = None
@@ -68,12 +61,6 @@ class WatcherService:
         """Loop principal do watcher que verifica execuções e cria jobs."""
         while self._running:
             try:
-                # Verificar se os serviços estão disponíveis
-                if not self.db_service:
-                    logger.debug("DatabaseService não disponível - aguardando...")
-                    time.sleep(5)
-                    continue
-                
                 # Obter lista de RPAs do banco de dados
                 lista_nomes_rpas = []
                 rpas_config = {}  # Dicionário para armazenar configurações dos RPAs
@@ -101,35 +88,28 @@ class WatcherService:
                     logger.warning(f"Erro ao obter RPAs do banco: {e}")
                     lista_nomes_rpas = []
                 
-                if lista_nomes_rpas and self.db_service:
-                    try:
-                        # Obter execuções pendentes do banco
-                        execucoes_por_robo = self.db_service.obter_execucoes(lista_nomes_rpas)
-                        
-                        # Processar cada RPA com execuções
-                        if self.k8s_service:
-                            for nome_do_rpa, execs_do_rpa in execucoes_por_robo.items():
-                                if execs_do_rpa and len(execs_do_rpa) > 0:
-                                    logger.info(f"Existem {len(execs_do_rpa)} execuções para o RPA {nome_do_rpa}")
-                                    
-                                    # Obter configuração do RPA do banco
-                                    rpa_config = rpas_config.get(nome_do_rpa)
-                                    
-                                    if rpa_config:
-                                        try:
-                                            # Criar jobs baseado nas execuções
-                                            self.k8s_service.create_job(
-                                                nome_rpa=nome_do_rpa,
-                                                docker_tag=rpa_config.get('docker_tag', 'latest'),
-                                                qtd_ram_maxima=rpa_config.get('qtd_ram_maxima', 256),
-                                                qtd_max_instancias=rpa_config.get('qtd_max_instancias', 1),
-                                                utiliza_arquivos_externos=rpa_config.get('utiliza_arquivos_externos', False),
-                                                tempo_maximo_de_vida=rpa_config.get('tempo_maximo_de_vida', 600)
-                                            )
-                                        except Exception as e:
-                                            logger.error(f"Erro ao criar job para {nome_do_rpa}: {e}")
-                    except Exception as e:
-                        logger.warning(f"Erro ao processar execuções: {e}")
+                execucoes_por_robo = CacheService.get_data(CacheKeys.EXECUTIONS, {}) or {}
+                if not execucoes_por_robo:
+                    logger.debug("Cache de execuções vazio - aguardando próximo ciclo")
+                
+                if lista_nomes_rpas and execucoes_por_robo and self.k8s_service:
+                    for nome_do_rpa in lista_nomes_rpas:
+                        execs_do_rpa = execucoes_por_robo.get(nome_do_rpa) or []
+                        if execs_do_rpa:
+                            logger.info(f"Existem {len(execs_do_rpa)} execuções para o RPA {nome_do_rpa}")
+                            rpa_config = rpas_config.get(nome_do_rpa)
+                            if rpa_config:
+                                try:
+                                    self.k8s_service.create_job(
+                                        nome_rpa=nome_do_rpa,
+                                        docker_tag=rpa_config.get('docker_tag', 'latest'),
+                                        qtd_ram_maxima=rpa_config.get('qtd_ram_maxima', 256),
+                                        qtd_max_instancias=rpa_config.get('qtd_max_instancias', 1),
+                                        utiliza_arquivos_externos=rpa_config.get('utiliza_arquivos_externos', False),
+                                        tempo_maximo_de_vida=rpa_config.get('tempo_maximo_de_vida', 600)
+                                    )
+                                except Exception as e:
+                                    logger.error(f"Erro ao criar job para {nome_do_rpa}: {e}")
                 
                 # Cronjobs e Deployments agora são gerenciados diretamente via API
                 # Não precisamos mais verificar arquivos YAML aqui

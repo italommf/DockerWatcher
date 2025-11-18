@@ -4,7 +4,7 @@ const API_BASE_URL = 'http://127.0.0.1:8000'
 
 const api = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 60000, // 60 segundos para permitir operações SSH/MySQL que podem demorar
+  timeout: 30000, // 30 segundos - suficiente para respostas do cache ou processamento
   headers: {
     'Content-Type': 'application/json',
   },
@@ -13,7 +13,7 @@ const api = axios.create({
 // Instância com timeout maior para operações de conexão
 const apiConnection = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 60000, // 60 segundos para testes de conexão
+  timeout: 20000, // 20 segundos para testes de conexão (quando não há cache)
   headers: {
     'Content-Type': 'application/json',
   },
@@ -21,22 +21,70 @@ const apiConnection = axios.create({
 
 // Interceptor para tratar erros (sem reinicialização automática)
 const errorInterceptor = (error) => {
+  // Extrair informações da requisição para depuração
+  const method = error.config?.method?.toUpperCase() || 'UNKNOWN'
+  const url = error.config?.url || error.config?.baseURL || 'UNKNOWN'
+  const fullUrl = error.config?.url ? `${error.config.baseURL}${error.config.url}` : url
+  const timeout = error.config?.timeout || 'N/A'
+  
+  // Gerar ID único para este erro
+  const errorId = `ERR-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+  
   if (error.code === 'ECONNABORTED') {
-    throw new Error('Timeout na requisição. O backend pode estar lento ou não está respondendo.')
+    const errorMsg = `[${errorId}] TIMEOUT: ${method} ${fullUrl} (timeout: ${timeout}ms) - Backend pode estar lento ou não está respondendo`
+    console.error(errorMsg, {
+      errorId,
+      method,
+      url: fullUrl,
+      timeout,
+      config: error.config
+    })
+    throw new Error(errorMsg)
   }
   if (error.response) {
     // Erro com resposta do servidor
+    const status = error.response.status || 'N/A'
     const errorMessage = error.response.data?.error || error.response.data?.message || 'Erro na requisição'
-    throw new Error(errorMessage)
+    const errorMsg = `[${errorId}] HTTP ${status}: ${method} ${fullUrl} - ${errorMessage}`
+    console.error(errorMsg, {
+      errorId,
+      method,
+      url: fullUrl,
+      status,
+      response: error.response.data
+    })
+    throw new Error(errorMsg)
   }
   if (error.request) {
     // Requisição foi feita mas não houve resposta
     if (error.code === 'ECONNREFUSED') {
-      throw new Error('Não foi possível conectar ao backend. Verifique se está rodando em http://127.0.0.1:8000')
+      const errorMsg = `[${errorId}] CONNECTION_REFUSED: ${method} ${fullUrl} - Backend não está rodando em http://127.0.0.1:8000`
+      console.error(errorMsg, {
+        errorId,
+        method,
+        url: fullUrl,
+        code: error.code
+      })
+      throw new Error(errorMsg)
     }
-    throw new Error('Erro de conexão. Verifique se o backend está rodando em http://127.0.0.1:8000')
+    const errorMsg = `[${errorId}] NO_RESPONSE: ${method} ${fullUrl} - Backend não está respondendo em http://127.0.0.1:8000`
+    console.error(errorMsg, {
+      errorId,
+      method,
+      url: fullUrl,
+      code: error.code,
+      request: error.request
+    })
+    throw new Error(errorMsg)
   }
-  throw error
+  const errorMsg = `[${errorId}] UNKNOWN_ERROR: ${method} ${fullUrl} - ${error.message || 'Erro desconhecido'}`
+  console.error(errorMsg, {
+    errorId,
+    method,
+    url: fullUrl,
+    error
+  })
+  throw new Error(errorMsg)
 }
 
 api.interceptors.response.use(

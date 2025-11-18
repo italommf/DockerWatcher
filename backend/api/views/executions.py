@@ -1,9 +1,6 @@
 from rest_framework import viewsets, status
 from rest_framework.response import Response
-from backend.services.service_manager import (
-    get_database_service,
-    get_file_service
-)
+from backend.services.cache_service import CacheKeys, CacheService
 from api.serializers.models import ExecutionSerializer
 import logging
 
@@ -14,35 +11,19 @@ class ExecutionViewSet(viewsets.ViewSet):
     
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        # Usar serviços singleton para evitar reconexões constantes
-        self.db_service = get_database_service()
-        self.file_service = get_file_service()
+        self.file_service = None  # Compatibilidade mantida, mas cache é a fonte primária
     
     def list(self, request):
         """Lista execuções pendentes (status_01=4) do banco de dados."""
         rpa_name = request.query_params.get('rpa_name', None)
         
-        # Obter lista de RPAs ativos
-        lista_json_rpas = self.file_service.obter_json_rpas()
-        lista_nomes_rpas = []
-        
-        for rpa_path in lista_json_rpas:
-            rpa_data = self.file_service.ler_json_rpa(rpa_path)
-            if rpa_data:
-                nome_rpa = rpa_data.get('nome_rpa')
-                if nome_rpa and (not rpa_name or nome_rpa == rpa_name):
-                    lista_nomes_rpas.append(nome_rpa)
-        
-        if not lista_nomes_rpas:
-            return Response([])
-        
-        # Obter execuções do banco
-        execucoes_por_robo = self.db_service.obter_execucoes(lista_nomes_rpas)
-        
-        # Flatten para lista simples
+        execucoes_por_robo = CacheService.get_data(CacheKeys.EXECUTIONS, {}) or {}
         execucoes = []
-        for nome_robo, execs in execucoes_por_robo.items():
-            execucoes.extend(execs)
+        if rpa_name:
+            execucoes = self._buscar_execucoes_cache(rpa_name, execucoes_por_robo)
+        else:
+            for execs in execucoes_por_robo.values():
+                execucoes.extend(execs)
         
         serializer = ExecutionSerializer(execucoes, many=True)
         return Response(serializer.data)
@@ -50,7 +31,8 @@ class ExecutionViewSet(viewsets.ViewSet):
     def retrieve(self, request, pk=None):
         """Obtém execuções pendentes de um RPA específico."""
         try:
-            execucoes = self.db_service.obter_execucoes_por_rpa(pk)
+            execucoes_por_robo = CacheService.get_data(CacheKeys.EXECUTIONS, {}) or {}
+            execucoes = self._buscar_execucoes_cache(pk, execucoes_por_robo)
             serializer = ExecutionSerializer(execucoes, many=True)
             return Response(serializer.data)
         except Exception as e:
@@ -59,4 +41,14 @@ class ExecutionViewSet(viewsets.ViewSet):
                 {'error': f'Erro ao obter execuções: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+    def _buscar_execucoes_cache(self, nome_rpa, exec_cache):
+        execucoes = exec_cache.get(nome_rpa, [])
+        if execucoes:
+            return execucoes
+        nome_normalizado = nome_rpa.replace('-', '').replace('_', '').lower()
+        for nome_db, execs in exec_cache.items():
+            if nome_normalizado == nome_db.replace('-', '').replace('_', '').lower():
+                return execs
+        return []
 

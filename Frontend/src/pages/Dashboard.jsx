@@ -831,6 +831,7 @@ export default function Dashboard({ isConnected = true, onReconnect }) {
         variant="h5" 
         gutterBottom 
         sx={{ 
+          mt: 4,
           mb: 2, 
           fontWeight: 'bold',
           color: '#F8FAFC',

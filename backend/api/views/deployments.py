@@ -1,9 +1,7 @@
 from rest_framework import viewsets, status
 from rest_framework.response import Response
-from backend.services.service_manager import (
-    get_kubernetes_service,
-    get_database_service
-)
+from backend.services.cache_service import CacheKeys, CacheService
+from backend.services.service_manager import get_kubernetes_service
 from api.serializers.models import DeploymentSerializer, CreateDeploymentSerializer
 from api.models import Deployment
 import yaml
@@ -18,14 +16,26 @@ class DeploymentViewSet(viewsets.ViewSet):
         super().__init__(*args, **kwargs)
         # Usar serviços singleton para evitar reconexões constantes
         self.k8s_service = get_kubernetes_service()
-        self.db_service = get_database_service()
     
     def list(self, request):
         """Lista todos os deployments do banco de dados e Kubernetes."""
         try:
+            # Tentar obter do cache processado primeiro (atualizado a cada 5s pelo PollingService)
+            deployments_cache = CacheService.get_data(CacheKeys.DEPLOYMENTS_PROCESSED)
+            if deployments_cache:
+                # Cache disponível - retornar instantaneamente
+                serializer = DeploymentSerializer(deployments_cache, many=True)
+                return Response(serializer.data)
+            
+            # Fallback: processar agora se cache não estiver disponível (primeira requisição)
+            logger.debug("Cache de deployments processados não disponível, processando agora...")
+            
             # Buscar deployments do Kubernetes
             try:
-                deployments = self.k8s_service.get_deployments()
+                deployments = CacheService.get_data(CacheKeys.DEPLOYMENTS, []) or []
+                if not deployments:
+                    deployments = self.k8s_service.get_deployments()
+                    CacheService.update(CacheKeys.DEPLOYMENTS, deployments)
             except Exception as e:
                 logger.error(f"Erro ao buscar deployments do Kubernetes: {e}")
                 deployments = []
@@ -55,13 +65,7 @@ class DeploymentViewSet(viewsets.ViewSet):
                     logger.warning(f"Erro ao processar deployment {dep.get('name', 'unknown')}: {e}")
                     continue
             
-            # Buscar execuções em lote
-            execucoes_por_robo = {}
-            if nomes_para_buscar_execucoes:
-                try:
-                    execucoes_por_robo = self.db_service.obter_execucoes(nomes_para_buscar_execucoes)
-                except Exception as e:
-                    logger.warning(f"Erro ao buscar execuções para deployments: {e}")
+            execucoes_por_robo = CacheService.get_data(CacheKeys.EXECUTIONS, {}) or {}
             
             for dep in deployments:
                 try:
@@ -93,23 +97,8 @@ class DeploymentViewSet(viewsets.ViewSet):
                     # Buscar execuções se for dependente
                     execucoes_pendentes = 0
                     if dependente_de_execucoes:
-                        try:
-                            # Tentar usar o nome diretamente ou extrair
-                            nome_rpa = nome.replace('deployment-', '').replace('-deployment', '')
-                            # Tentar buscar execuções
-                            execucoes = execucoes_por_robo.get(nome_rpa, [])
-                            # Também tentar com variações do nome
-                            if not execucoes:
-                                for nome_db, execs in execucoes_por_robo.items():
-                                    nome_rpa_normalizado = nome_rpa.replace('-', '').replace('_', '').lower()
-                                    nome_db_normalizado = nome_db.replace('-', '').replace('_', '').lower()
-                                    if nome_rpa_normalizado == nome_db_normalizado:
-                                        execucoes = execs
-                                        break
-                            execucoes_pendentes = len(execucoes)
-                        except Exception as e:
-                            logger.warning(f"Erro ao buscar execuções para deployment {nome}: {e}")
-                            execucoes_pendentes = 0
+                        nome_rpa = nome.replace('deployment-', '').replace('-deployment', '')
+                        execucoes_pendentes = self._buscar_execucoes_por_nome(nome_rpa, execucoes_por_robo)
                     
                     dep['apelido'] = apelido
                     dep['tags'] = tags
@@ -127,7 +116,10 @@ class DeploymentViewSet(viewsets.ViewSet):
     
     def retrieve(self, request, pk=None):
         """Obtém detalhes de um deployment específico."""
-        deployments = self.k8s_service.get_deployments()
+        deployments = CacheService.get_data(CacheKeys.DEPLOYMENTS, []) or []
+        if not deployments:
+            deployments = self.k8s_service.get_deployments()
+            CacheService.update(CacheKeys.DEPLOYMENTS, deployments)
         deployment = next((d for d in deployments if d['name'] == pk), None)
         
         if not deployment:
@@ -151,16 +143,11 @@ class DeploymentViewSet(viewsets.ViewSet):
         if '24/7' not in tags:
             tags.append('24/7')
         
-        # Buscar execuções se for dependente
         execucoes_pendentes = 0
         if dependente_de_execucoes:
-            try:
-                # Tentar usar o nome diretamente ou extrair
-                nome_rpa = pk.replace('deployment-', '').replace('-deployment', '')
-                execucoes = self.db_service.obter_execucoes_por_rpa(nome_rpa)
-                execucoes_pendentes = len(execucoes)
-            except Exception as e:
-                logger.warning(f"Erro ao buscar execuções para deployment {pk}: {e}")
+            nome_rpa = pk.replace('deployment-', '').replace('-deployment', '')
+            exec_cache = CacheService.get_data(CacheKeys.EXECUTIONS, {}) or {}
+            execucoes_pendentes = self._buscar_execucoes_por_nome(nome_rpa, exec_cache)
         
         deployment['apelido'] = apelido
         deployment['tags'] = tags
@@ -246,6 +233,9 @@ spec:
             
             deployment = Deployment.objects.create(**create_kwargs)
             
+            # Invalidar cache de deployments processados
+            CacheService.update(CacheKeys.DEPLOYMENTS_PROCESSED, None)
+            
             # Aplicar via kubectl usando o YAML diretamente
             from backend.services.service_manager import get_file_service
             file_service = get_file_service()
@@ -280,18 +270,26 @@ spec:
             return Response({'error': 'yaml_content é obrigatório'}, status=status.HTTP_400_BAD_REQUEST)
         
         try:
+            from backend.services.service_manager import get_file_service
+            from backend.config.ssh_config import get_paths_config
+            
+            file_service = get_file_service()
+            paths = get_paths_config()
+            deployments_path = paths.get('deployments_path', '/tmp')
+            
             deployment_data = yaml.safe_load(yaml_content)
-            success = self.file_service.escrever_yaml_deployment(pk, deployment_data)
+            success = file_service.escrever_yaml_deployment(pk, deployment_data)
             
             if not success:
                 return Response({'error': 'Erro ao salvar arquivo YAML'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
             
             # Aplicar via kubectl
-            deployments_path = self.file_service.paths['deployments_path']
             yaml_path = f"{deployments_path}/deployment_{pk}.yaml"
             success = self.k8s_service.apply_deployment(yaml_path)
             
             if success:
+                # Invalidar cache de deployments processados
+                CacheService.update(CacheKeys.DEPLOYMENTS_PROCESSED, None)
                 return Response({'message': 'Deployment atualizado com sucesso'}, status=status.HTTP_200_OK)
             else:
                 return Response({'error': 'Erro ao aplicar deployment no Kubernetes'}, 
@@ -315,6 +313,9 @@ spec:
                 except Deployment.DoesNotExist:
                     pass  # Já foi deletado ou não existe
                 
+                # Invalidar cache de deployments processados
+                CacheService.update(CacheKeys.DEPLOYMENTS_PROCESSED, None)
+                
                 # Tentar deletar arquivo YAML também (se existir)
                 try:
                     from backend.services.service_manager import get_file_service
@@ -333,4 +334,16 @@ spec:
         except Exception as e:
             logger.error(f"Erro ao deletar deployment: {e}")
             return Response({'error': f'Erro ao deletar deployment: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    def _buscar_execucoes_por_nome(self, nome_rpa: str, exec_cache):
+        if not isinstance(exec_cache, dict):
+            return 0
+        execucoes = exec_cache.get(nome_rpa, [])
+        if execucoes:
+            return len(execucoes)
+        nome_normalizado = nome_rpa.replace('-', '').replace('_', '').lower()
+        for nome_db, execs in exec_cache.items():
+            if nome_normalizado == nome_db.replace('-', '').replace('_', '').lower():
+                return len(execs)
+        return 0
 

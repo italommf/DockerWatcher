@@ -1,11 +1,8 @@
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from backend.services.service_manager import (
-    get_kubernetes_service,
-    get_database_service,
-    get_file_service
-)
+from backend.services.cache_service import CacheKeys, CacheService
+from backend.services.service_manager import get_kubernetes_service
 from api.serializers.models import JobSerializer, PodSerializer, PodLogsSerializer
 import logging
 import re
@@ -19,13 +16,16 @@ class JobViewSet(viewsets.ViewSet):
         super().__init__(*args, **kwargs)
         # Usar serviços singleton para evitar reconexões constantes
         self.k8s_service = get_kubernetes_service()
-        self.db_service = get_database_service()
-        self.file_service = get_file_service()
     
     def list(self, request):
         """Lista todos os jobs."""
         label_selector = request.query_params.get('label_selector', None)
-        jobs = self.k8s_service.get_jobs(label_selector)
+        jobs = CacheService.get_data(CacheKeys.JOBS, []) or []
+        if not jobs:
+            jobs = self.k8s_service.get_jobs()
+            CacheService.update(CacheKeys.JOBS, jobs)
+        if label_selector:
+            jobs = self._filter_by_label(jobs, label_selector)
         
         serializer = JobSerializer(jobs, many=True)
         return Response(serializer.data)
@@ -82,19 +82,29 @@ class JobViewSet(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
     def status(self, request):
         """Obtém resumo de status dos jobs por RPA usando kubectl get jobs."""
-        rpa_name = request.query_params.get('rpa_name', None)
+        import time
+        request_id = getattr(request, '_request_id', 'UNKNOWN')
+        start_time = time.time()
         
-        # Usar kubectl get jobs para obter informações dos jobs
-        try:
-            if rpa_name:
-                label_selector = f"nome_robo={rpa_name.lower()}"
-                jobs = self.k8s_service.get_jobs(label_selector)
-            else:
-                # Buscar todos os jobs
+        rpa_name = request.query_params.get('rpa_name', None)
+        logger.info(f"[{request_id}] GET /api/jobs/status/ - rpa_name={rpa_name}")
+        
+        jobs = CacheService.get_data(CacheKeys.JOBS, []) or []
+        if not jobs:
+            logger.warning(f"[{request_id}] Cache de jobs vazio, buscando do Kubernetes")
+            try:
                 jobs = self.k8s_service.get_jobs()
-        except Exception as e:
-            logger.error(f"Erro ao buscar jobs: {e}")
-            jobs = []
+                CacheService.update(CacheKeys.JOBS, jobs)
+                logger.info(f"[{request_id}] {len(jobs)} jobs obtidos do Kubernetes")
+            except Exception as e:
+                logger.error(f"[{request_id}] Erro ao buscar jobs: {e}", exc_info=True)
+                jobs = []
+        else:
+            logger.debug(f"[{request_id}] {len(jobs)} jobs obtidos do cache")
+        
+        if rpa_name:
+            label_selector = f"nome_robo={rpa_name.lower()}"
+            jobs = self._filter_by_label(jobs, label_selector)
         
         # Agrupar por RPA baseado nos jobs
         status_by_rpa = {}
@@ -196,6 +206,7 @@ class JobViewSet(viewsets.ViewSet):
             # Buscar pods apenas se houver necessidade (ex: para detectar pending)
             # Por enquanto, vamos pular a busca de pods para melhorar performance
             # Os dados dos jobs já fornecem running, failed e succeeded
+            logger.debug(f"[{request_id}] Pulando busca de pods (otimização)")
             # Pods pendentes/erro são menos críticos e podem ser obtidos depois se necessário
             pass  # Pular busca de pods por enquanto para melhorar performance
         except Exception as e:
@@ -206,40 +217,20 @@ class JobViewSet(viewsets.ViewSet):
         # Coletar todos os nomes de RPA identificados (exceto 'unknown')
         nomes_rpas_para_buscar = [nome for nome in status_by_rpa.keys() if nome != 'unknown']
         
-        if nomes_rpas_para_buscar:
-            try:
-                execucoes_por_robo = self.db_service.obter_execucoes(nomes_rpas_para_buscar)
-                
-                # Adicionar contagem de execuções pendentes para cada RPA
-                for nome_robo in status_by_rpa.keys():
-                    if nome_robo != 'unknown':
-                        # Buscar execuções para este RPA (pode ter variações de nome)
-                        execucoes = execucoes_por_robo.get(nome_robo, [])
-                        # Também tentar buscar com variações (com/sem hífens/underscores)
-                        if not execucoes:
-                            # Tentar buscar com diferentes variações do nome
-                            for nome_db, execs in execucoes_por_robo.items():
-                                # Normalizar nomes para comparação (remover hífens/underscores)
-                                nome_robo_normalizado = nome_robo.replace('-', '').replace('_', '').lower()
-                                nome_db_normalizado = nome_db.replace('-', '').replace('_', '').lower()
-                                if nome_robo_normalizado == nome_db_normalizado:
-                                    execucoes = execs
-                                    break
-                        
-                        execucoes_pendentes = len(execucoes)
-                        status_by_rpa[nome_robo]['execucoes_pendentes'] = execucoes_pendentes
-                    else:
-                        # Para 'unknown', não buscar execuções
-                        status_by_rpa[nome_robo]['execucoes_pendentes'] = 0
-            except Exception as e:
-                logger.warning(f"Erro ao buscar execuções do banco MySQL: {e}")
-                # Se falhar, definir execuções como 0 para todos
-                for nome_robo in status_by_rpa.keys():
-                    status_by_rpa[nome_robo]['execucoes_pendentes'] = 0
-        else:
-            # Se não há nomes para buscar, definir execuções como 0
-            for nome_robo in status_by_rpa.keys():
+        execucoes_por_robo = CacheService.get_data(CacheKeys.EXECUTIONS, {}) or {}
+        for nome_robo in status_by_rpa.keys():
+            if nome_robo == 'unknown':
                 status_by_rpa[nome_robo]['execucoes_pendentes'] = 0
+                continue
+            execucoes = execucoes_por_robo.get(nome_robo, [])
+            if not execucoes:
+                for nome_db, execs in execucoes_por_robo.items():
+                    nome_robo_normalizado = nome_robo.replace('-', '').replace('_', '').lower()
+                    nome_db_normalizado = nome_db.replace('-', '').replace('_', '').lower()
+                    if nome_robo_normalizado == nome_db_normalizado:
+                        execucoes = execs
+                        break
+            status_by_rpa[nome_robo]['execucoes_pendentes'] = len(execucoes)
         
         # Filtrar "unknown" se não tiver pods ativos (para não poluir o dashboard)
         # Mas manter se tiver pods ativos para o usuário ver
@@ -255,8 +246,24 @@ class JobViewSet(viewsets.ViewSet):
                 logger.warning(f"Jobs 'unknown' encontrados com {unknown_status['running']} pods ativos: {jobs_details}. "
                              f"Verifique os jobs no Kubernetes. Acesse /api/jobs/unknown/ para mais detalhes.")
         
-        logger.info(f"Status por RPA: {status_by_rpa}")
+        elapsed = time.time() - start_time
+        logger.info(f"[{request_id}] Status por RPA processado em {elapsed:.3f}s - {len(status_by_rpa)} RPAs encontrados")
+        if elapsed > 1.0:
+            logger.warning(f"[{request_id}] ATENÇÃO: Método status demorou {elapsed:.3f}s (acima de 1s)")
         return Response(status_by_rpa)
+
+    def _filter_by_label(self, jobs, label_selector: str):
+        if not label_selector or '=' not in label_selector:
+            return jobs
+        key, value = [part.strip() for part in label_selector.split('=', 1)]
+        if not key:
+            return jobs
+        filtered = []
+        for job in jobs:
+            labels = job.get('labels', {}) if isinstance(job, dict) else {}
+            if labels.get(key) == value:
+                filtered.append(job)
+        return filtered
     
     @action(detail=False, methods=['get'])
     def unknown(self, request):

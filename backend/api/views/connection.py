@@ -1,6 +1,7 @@
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from rest_framework import status
+from backend.services.cache_service import CacheKeys, CacheService
 from backend.services.service_manager import (
     get_ssh_service,
     get_database_service,
@@ -13,37 +14,27 @@ logger = logging.getLogger(__name__)
 
 @api_view(['GET'])
 def connection_status(request):
-    """Verifica o status das conexões SSH e MySQL."""
-    # Usar serviços singleton para evitar reconexões constantes
-    ssh_service = get_ssh_service()
-    db_service = get_database_service()
+    """Retorna o status conhecido das conexões SSH/MySQL sem retestar."""
+    request_id = getattr(request, '_request_id', 'UNKNOWN')
+    logger.info(f"[{request_id}] GET /api/connection/status/ - Consultando status do cache")
     
-    ssh_connected = ssh_service.test_connection()
-    mysql_connected, mysql_error = db_service.test_connection_with_details()
+    cached_status = CacheService.get_data(CacheKeys.CONNECTION_STATUS)
+    if not cached_status:
+        logger.warning(f"[{request_id}] Status de conexão não encontrado no cache")
+        cached_status = {
+            'ssh_connected': False,
+            'mysql_connected': False,
+            'ssh_error': 'Status ainda não disponível',
+            'mysql_error': 'Status ainda não disponível'
+        }
+    else:
+        logger.debug(f"[{request_id}] Status encontrado no cache: SSH={cached_status.get('ssh_connected')}, MySQL={cached_status.get('mysql_connected')}")
     
-    ssh_error = None
-    if not ssh_connected:
-        ssh_error = "Falha na conexão SSH. Verifique as configurações no config.ini"
-    
-    # mysql_error já vem preenchido pelo método test_connection_with_details
-    if mysql_connected:
-        mysql_error = None
-    
-    # Log para debug
-    logger.info(f"Status conexão - SSH: {ssh_connected}, MySQL: {mysql_connected}, Erro MySQL: {mysql_error}")
-    
-    data = {
-        'ssh_connected': ssh_connected,
-        'mysql_connected': mysql_connected,
-        'ssh_error': ssh_error,
-        'mysql_error': mysql_error
-    }
-    
-    serializer = ConnectionStatusSerializer(data=data)
+    serializer = ConnectionStatusSerializer(data=cached_status)
     if serializer.is_valid():
         return Response(serializer.validated_data, status=status.HTTP_200_OK)
     
-    return Response(data, status=status.HTTP_200_OK)
+    return Response(cached_status, status=status.HTTP_200_OK)
 
 @api_view(['POST'])
 def reload_services(request):

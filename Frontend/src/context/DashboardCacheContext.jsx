@@ -38,6 +38,7 @@ export const DashboardCacheProvider = ({ children }) => {
   const dataIntervalRef = useRef(null)
   const resourcesIntervalRef = useRef(null)
   const isInitializedRef = useRef(false)
+  const dashboardLoadingRef = useRef(false) // Lock para evitar requisições duplicadas do dashboard
 
   // Função para calcular próxima execução (mesma do Dashboard)
   const calcularProximaExecucao = (schedule) => {
@@ -126,18 +127,53 @@ export const DashboardCacheProvider = ({ children }) => {
   // Função para carregar dados do dashboard
   const loadDashboardData = async (isConnected) => {
     if (!isConnected) return
+    
+    // Evitar requisições duplicadas simultâneas
+    if (dashboardLoadingRef.current) {
+      console.log('[DASHBOARD] Requisição já em andamento, ignorando duplicata')
+      return
+    }
 
+    dashboardLoadingRef.current = true
+    const requestId = `REQ-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+    console.log(`[${requestId}] Iniciando carregamento de dados do dashboard`)
+    
+    const startTime = Date.now()
+    
     try {
-      const [rpas, jobsStatus, cronjobsData, deployments] = await Promise.all([
-        api.getRPAs(),
-        api.getJobStatus(),
-        api.getCronjobs(),
-        api.getDeployments(),
+      // Fazer requisições com tratamento de erro individual
+      // Se uma falhar, as outras continuam funcionando
+      const [rpas, jobsStatus, cronjobsData, deployments] = await Promise.allSettled([
+        api.getRPAs().catch(err => {
+          console.warn(`[${requestId}] Erro ao carregar RPAs:`, err.message || err)
+          return [] // Retornar array vazio em caso de erro
+        }),
+        api.getJobStatus().catch(err => {
+          console.warn(`[${requestId}] Erro ao carregar status de jobs:`, err.message || err)
+          return {} // Retornar objeto vazio em caso de erro
+        }),
+        api.getCronjobs().catch(err => {
+          console.warn(`[${requestId}] Erro ao carregar cronjobs:`, err.message || err)
+          return [] // Retornar array vazio em caso de erro
+        }),
+        api.getDeployments().catch(err => {
+          console.warn(`[${requestId}] Erro ao carregar deployments:`, err.message || err)
+          return [] // Retornar array vazio em caso de erro
+        }),
       ])
       
+      const elapsed = Date.now() - startTime
+      console.log(`[${requestId}] Carregamento concluído em ${elapsed}ms`)
+
+      // Extrair valores dos resultados (Promise.allSettled retorna {status, value})
+      const rpasData = rpas.status === 'fulfilled' ? rpas.value : []
+      const jobsStatusData = jobsStatus.status === 'fulfilled' ? jobsStatus.value : {}
+      const cronjobsDataResult = cronjobsData.status === 'fulfilled' ? cronjobsData.value : []
+      const deploymentsData = deployments.status === 'fulfilled' ? deployments.value : []
+      
       // Processar cronjobs
-      const cronjobsAtivos = Array.isArray(cronjobsData)
-        ? cronjobsData.filter((cj) => !cj.suspended)
+      const cronjobsAtivos = Array.isArray(cronjobsDataResult)
+        ? cronjobsDataResult.filter((cj) => !cj.suspended)
         : []
       
       const cronjobsOrdenados = cronjobsAtivos
@@ -175,8 +211,8 @@ export const DashboardCacheProvider = ({ children }) => {
       }
 
       const deploymentsMap = new Map()
-      if (Array.isArray(deployments)) {
-        deployments.forEach(dep => {
+      if (Array.isArray(deploymentsData)) {
+        deploymentsData.forEach(dep => {
           const nome = dep.name?.toLowerCase()
           if (nome) {
             deploymentsMap.set(nome, true)
@@ -200,117 +236,136 @@ export const DashboardCacheProvider = ({ children }) => {
       const nomesAdicionados = new Set()
 
       // Processar jobs rodando
-      Object.keys(jobsStatus).forEach((nomeRpaKey) => {
-        const status = jobsStatus[nomeRpaKey]
-        if (status.running > 0) {
-          const nomeComparacao = nomeRpaKey.toLowerCase().replace(/[-_]/g, '')
-          const rpaExistente = rpas.find(rpa => {
-            const nomeRpaComparacao = rpa.nome_rpa?.toLowerCase().replace(/[-_]/g, '')
-            return nomeRpaComparacao === nomeComparacao || 
-                   rpa.nome_rpa?.toLowerCase() === nomeRpaKey.toLowerCase()
-          })
+      const jobsStatusKeys = jobsStatusData && typeof jobsStatusData === 'object' ? Object.keys(jobsStatusData) : []
+      jobsStatusKeys.forEach((nomeRpaKey) => {
+        const status = jobsStatusData[nomeRpaKey]
+        // Verificar se status existe e é um objeto válido
+        if (!status || typeof status !== 'object') return
+        // Verificar se running existe e é maior que 0
+        const running = status.running
+        if (!running || running <= 0) return
+        
+        const nomeComparacao = nomeRpaKey.toLowerCase().replace(/[-_]/g, '')
+        const rpaExistente = (Array.isArray(rpasData) ? rpasData : []).find(rpa => {
+          const nomeRpaComparacao = rpa.nome_rpa?.toLowerCase().replace(/[-_]/g, '')
+          return nomeRpaComparacao === nomeComparacao || 
+                 rpa.nome_rpa?.toLowerCase() === nomeRpaKey.toLowerCase()
+        })
+        
+        const jaAdicionado = Array.from(nomesAdicionados).some(nome => {
+          const nomeComp = nome.toLowerCase().replace(/[-_]/g, '')
+          return nomeComp === nomeComparacao
+        })
+        
+        if (!rpaExistente && !jaAdicionado) {
+          // Garantir que status é válido antes de acessar propriedades
+          if (!status || typeof status !== 'object') return
           
-          const jaAdicionado = Array.from(nomesAdicionados).some(nome => {
-            const nomeComp = nome.toLowerCase().replace(/[-_]/g, '')
-            return nomeComp === nomeComparacao
-          })
-          
-          if (!rpaExistente && !jaAdicionado) {
-            const tipo = status.tipo || determinarTipo(nomeRpaKey)
-            let execucoes = 0
-            let dependenteDeExecucoes = true
+          const tipo = (status.tipo) ? status.tipo : determinarTipo(nomeRpaKey)
+          let execucoes = 0
+          let dependenteDeExecucoes = true
 
-            if (tipo === 'Cronjob') {
-              const cronjobCorrespondente = cronjobsOrdenados?.find(cj => {
-                const nomeCjLower = cj.name?.toLowerCase()
-                const nomeRpaLower = nomeRpaKey.toLowerCase()
-                return nomeCjLower === nomeRpaLower || 
-                       nomeCjLower?.includes(nomeRpaLower) ||
-                       nomeRpaLower?.includes(nomeCjLower?.replace('rpa-cronjob-', '').replace('-cronjob', ''))
-              })
-              
-              if (cronjobCorrespondente) {
-                dependenteDeExecucoes = cronjobCorrespondente.dependente_de_execucoes !== false
-                if (dependenteDeExecucoes) {
-                  execucoes = status.execucoes_pendentes !== undefined ? status.execucoes_pendentes : 0
-                }
-              } else {
-                execucoes = status.execucoes_pendentes !== undefined ? status.execucoes_pendentes : 0
-              }
-            } else if (tipo === 'Deploy') {
-              const deploymentCorrespondente = deployments?.find(dep => {
-                const nomeDepLower = dep.name?.toLowerCase()
-                const nomeRpaLower = nomeRpaKey.toLowerCase()
-                return nomeDepLower === nomeRpaLower || 
-                       nomeDepLower?.includes(nomeRpaLower) ||
-                       nomeRpaLower?.includes(nomeDepLower?.replace('deployment-', '').replace('-deployment', ''))
-              })
-              
-              if (deploymentCorrespondente) {
-                dependenteDeExecucoes = deploymentCorrespondente.dependente_de_execucoes !== false
-                if (dependenteDeExecucoes) {
-                  execucoes = status.execucoes_pendentes !== undefined ? status.execucoes_pendentes : 0
-                }
-              } else {
-                execucoes = status.execucoes_pendentes !== undefined ? status.execucoes_pendentes : 0
+          if (tipo === 'Cronjob') {
+            const cronjobCorrespondente = cronjobsOrdenados?.find(cj => {
+              const nomeCjLower = cj.name?.toLowerCase()
+              const nomeRpaLower = nomeRpaKey.toLowerCase()
+              return nomeCjLower === nomeRpaLower || 
+                     nomeCjLower?.includes(nomeRpaLower) ||
+                     nomeRpaLower?.includes(nomeCjLower?.replace('rpa-cronjob-', '').replace('-cronjob', ''))
+            })
+            
+            if (cronjobCorrespondente) {
+              dependenteDeExecucoes = cronjobCorrespondente.dependente_de_execucoes !== false
+              if (dependenteDeExecucoes) {
+                execucoes = (status.execucoes_pendentes !== undefined && status.execucoes_pendentes !== null) ? status.execucoes_pendentes : 0
               }
             } else {
-              execucoes = status.execucoes_pendentes !== undefined ? status.execucoes_pendentes : 0
+              execucoes = (status.execucoes_pendentes !== undefined && status.execucoes_pendentes !== null) ? status.execucoes_pendentes : 0
             }
-            
-            nomesAdicionados.add(nomeRpaKey)
-            const nomeNormalizado = nomeRpaKey.toLowerCase().replace(/[-_]/g, '')
-            if (nomeNormalizado) {
-              rpasRodando.add(nomeNormalizado)
-              jobsContabilizados.add(nomeNormalizado)
-            }
-            
-            instanciasAtivas += status.running || 0
-            falhasContainers += (status.error || 0) + (status.failed || 0)
-            
-            if (dependenteDeExecucoes && execucoes > 0) {
-              execucoesPendentes += execucoes
-            }
-            
-            robotsList.push({
-              nome: formatarNome(nomeRpaKey),
-              instancias: status.running || 0,
-              status: 'Running',
-              statusColor: 'success',
-              execucoes: dependenteDeExecucoes ? execucoes : 'Rotina Sem Exec',
-              tipo: tipo,
+          } else if (tipo === 'Deploy') {
+            const deploymentCorrespondente = deploymentsData?.find(dep => {
+              const nomeDepLower = dep.name?.toLowerCase()
+              const nomeRpaLower = nomeRpaKey.toLowerCase()
+              return nomeDepLower === nomeRpaLower || 
+                     nomeDepLower?.includes(nomeRpaLower) ||
+                     nomeRpaLower?.includes(nomeDepLower?.replace('deployment-', '').replace('-deployment', ''))
             })
+            
+            if (deploymentCorrespondente) {
+              dependenteDeExecucoes = deploymentCorrespondente.dependente_de_execucoes !== false
+              if (dependenteDeExecucoes) {
+                execucoes = (status.execucoes_pendentes !== undefined && status.execucoes_pendentes !== null) ? status.execucoes_pendentes : 0
+              }
+            } else {
+              execucoes = (status.execucoes_pendentes !== undefined && status.execucoes_pendentes !== null) ? status.execucoes_pendentes : 0
+            }
+          } else {
+            execucoes = (status.execucoes_pendentes !== undefined && status.execucoes_pendentes !== null) ? status.execucoes_pendentes : 0
           }
+          
+          nomesAdicionados.add(nomeRpaKey)
+          const nomeNormalizado = nomeRpaKey.toLowerCase().replace(/[-_]/g, '')
+          if (nomeNormalizado) {
+            rpasRodando.add(nomeNormalizado)
+            jobsContabilizados.add(nomeNormalizado)
+          }
+          
+          // Garantir que status é válido antes de acessar propriedades
+          const runningValue = (status && typeof status === 'object' && status.running) ? status.running : 0
+          const errorValue = (status && typeof status === 'object' && status.error) ? status.error : 0
+          const failedValue = (status && typeof status === 'object' && status.failed) ? status.failed : 0
+          
+          instanciasAtivas += runningValue
+          falhasContainers += errorValue + failedValue
+          
+          if (dependenteDeExecucoes && execucoes > 0) {
+            execucoesPendentes += execucoes
+          }
+          
+          robotsList.push({
+            nome: formatarNome(nomeRpaKey),
+            instancias: runningValue,
+            status: 'Running',
+            statusColor: 'success',
+            execucoes: dependenteDeExecucoes ? execucoes : 'Rotina Sem Exec',
+            tipo: tipo,
+          })
         }
       })
 
       // Processar RPAs cadastrados
-      if (Array.isArray(rpas)) {
-        rpas.forEach((rpa) => {
-          const nomeRpaLower = rpa.nome_rpa?.toLowerCase()
-          const status = jobsStatus[nomeRpaLower] || 
-                        jobsStatus[rpa.nome_rpa] || 
-                        jobsStatus[nomeRpaLower?.replace('_', '-')] ||
-                        jobsStatus[nomeRpaLower?.replace('-', '_')] ||
-                        {}
+      if (Array.isArray(rpasData)) {
+        rpasData.forEach((rpa) => {
+          if (!rpa || typeof rpa !== 'object') return
           
-          const execucoesRpa = status.execucoes_pendentes !== undefined 
+          const nomeRpaLower = rpa.nome_rpa?.toLowerCase()
+          const status = (jobsStatusData && typeof jobsStatusData === 'object') ? (
+            jobsStatusData[nomeRpaLower] || 
+            jobsStatusData[rpa.nome_rpa] || 
+            jobsStatusData[nomeRpaLower?.replace('_', '-')] ||
+            jobsStatusData[nomeRpaLower?.replace('-', '_')] ||
+            {}
+          ) : {}
+          
+          // Verificar se status é um objeto válido
+          const statusValido = status && typeof status === 'object'
+          
+          const execucoesRpa = statusValido && status.execucoes_pendentes !== undefined 
             ? status.execucoes_pendentes 
             : (rpa.execucoes_pendentes || 0)
           execucoesPendentes += execucoesRpa
           
-          instanciasAtivas += status.running || 0
-          falhasContainers += (status.error || 0) + (status.failed || 0)
+          instanciasAtivas += statusValido ? (status.running || 0) : 0
+          falhasContainers += statusValido ? ((status.error || 0) + (status.failed || 0)) : 0
           
-          if (status.running > 0) {
+          if (statusValido && status.running > 0) {
             const nomeNormalizado = nomeRpaLower?.replace(/[-_]/g, '') || rpa.nome_rpa?.toLowerCase().replace(/[-_]/g, '')
             if (nomeNormalizado) {
               rpasRodando.add(nomeNormalizado)
               jobsContabilizados.add(nomeNormalizado)
             }
-          }
-
-          if (status.running > 0) {
+            
+            // Adicionar à lista de robôs se ainda não foi adicionado
             const nomeOriginal = rpa.nome_rpa || ''
             const nomeComparacao = nomeOriginal.toLowerCase().replace(/[-_]/g, '')
             
@@ -320,11 +375,13 @@ export const DashboardCacheProvider = ({ children }) => {
             })
             
             if (!jaExiste) {
-              const tipo = status.tipo || 'RPA'
+              // Garantir que status é válido antes de acessar propriedades
+              const tipo = (statusValido && status.tipo) ? status.tipo : 'RPA'
+              const runningValue = (statusValido && status.running) ? status.running : 0
               nomesAdicionados.add(nomeOriginal)
               robotsList.push({
                 nome: formatarNome(nomeOriginal) || 'N/A',
-                instancias: status.running || 0,
+                instancias: runningValue,
                 status: 'Running',
                 statusColor: 'success',
                 execucoes: execucoesRpa,
@@ -336,19 +393,28 @@ export const DashboardCacheProvider = ({ children }) => {
       }
 
       // Adicionar execuções pendentes de jobs não cadastrados
-      Object.keys(jobsStatus).forEach((nomeRpaKey) => {
-        const status = jobsStatus[nomeRpaKey]
+      jobsStatusKeys.forEach((nomeRpaKey) => {
+        const status = jobsStatusData[nomeRpaKey]
+        // Verificar se status existe e é um objeto válido
+        if (!status || typeof status !== 'object') return
+        
         const nomeNormalizado = nomeRpaKey.toLowerCase().replace(/[-_]/g, '')
         
+        // Garantir que rpasData é um array antes de usar .find()
+        const rpasArray = Array.isArray(rpasData) ? rpasData : []
         const jaContabilizado = jobsContabilizados.has(nomeNormalizado) || 
-          (rpas && rpas.find(rpa => {
+          rpasArray.find(rpa => {
+            if (!rpa || typeof rpa !== 'object') return false
             const nomeRpaComparacao = rpa.nome_rpa?.toLowerCase().replace(/[-_]/g, '')
             return nomeRpaComparacao === nomeNormalizado || 
                    rpa.nome_rpa?.toLowerCase() === nomeRpaKey.toLowerCase()
-          }))
+          })
         
         if (!jaContabilizado) {
-          const tipo = status.tipo || determinarTipo(nomeRpaKey)
+          // Garantir que status é válido antes de acessar propriedades
+          if (!status || typeof status !== 'object') return
+          
+          const tipo = (status.tipo) ? status.tipo : determinarTipo(nomeRpaKey)
           let dependenteDeExecucoes = true
           
           if (tipo === 'Cronjob') {
@@ -364,7 +430,7 @@ export const DashboardCacheProvider = ({ children }) => {
               dependenteDeExecucoes = cronjobCorrespondente.dependente_de_execucoes !== false
             }
           } else if (tipo === 'Deploy') {
-            const deploymentCorrespondente = deployments?.find(dep => {
+            const deploymentCorrespondente = deploymentsData?.find(dep => {
               const nomeDepLower = dep.name?.toLowerCase()
               const nomeRpaLower = nomeRpaKey.toLowerCase()
               return nomeDepLower === nomeRpaLower || 
@@ -377,14 +443,19 @@ export const DashboardCacheProvider = ({ children }) => {
             }
           }
           
-          if (dependenteDeExecucoes && status.execucoes_pendentes !== undefined) {
+          if (dependenteDeExecucoes && status.execucoes_pendentes !== undefined && status.execucoes_pendentes !== null) {
             execucoesPendentes += status.execucoes_pendentes || 0
           }
           
-          instanciasAtivas += status.running || 0
-          falhasContainers += (status.error || 0) + (status.failed || 0)
+          // Verificar se status tem as propriedades esperadas antes de acessar
+          const running = status.running || 0
+          const error = status.error || 0
+          const failed = status.failed || 0
           
-          if (status.running > 0 && nomeNormalizado) {
+          instanciasAtivas += running
+          falhasContainers += error + failed
+          
+          if (running > 0 && nomeNormalizado) {
             rpasRodando.add(nomeNormalizado)
             jobsContabilizados.add(nomeNormalizado)
           }
@@ -393,17 +464,17 @@ export const DashboardCacheProvider = ({ children }) => {
 
       rpasAtivos = rpasRodando.size
 
-      const cronjobsAtivosCount = Array.isArray(cronjobsData)
-        ? cronjobsData.filter((cj) => !cj.suspended).length
+      const cronjobsAtivosCount = Array.isArray(cronjobsDataResult)
+        ? cronjobsDataResult.filter((cj) => !cj.suspended).length
         : 0
 
       // Atualizar cache
       setCachedData(prev => ({
         ...prev,
-        rpas,
-        jobsStatus,
+        rpas: rpasData,
+        jobsStatus: jobsStatusData,
         cronjobs: cronjobsOrdenados,
-        deployments,
+        deployments: deploymentsData,
         robots: robotsList,
         stats: {
           instanciasAtivas,
@@ -414,16 +485,43 @@ export const DashboardCacheProvider = ({ children }) => {
         },
       }))
     } catch (error) {
-      console.error('Erro ao carregar dados do dashboard:', error)
+      const errorId = `DASH-ERR-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+      console.error(`[${errorId}] Erro ao carregar dados do dashboard:`, {
+        errorId,
+        message: error.message,
+        stack: error.stack,
+        error
+      })
+      // Em caso de erro, manter dados anteriores do cache para não quebrar a UI
+      // O próximo ciclo tentará atualizar novamente
+    } finally {
+      // Sempre liberar o lock, mesmo em caso de erro
+      dashboardLoadingRef.current = false
     }
   }
+
+  // Ref para evitar requisições duplicadas simultâneas
+  const vmResourcesLoadingRef = useRef(false)
 
   // Função para carregar recursos da VM
   const loadVMResources = async (isConnected) => {
     if (!isConnected) return
     
+    // Evitar requisições duplicadas simultâneas
+    if (vmResourcesLoadingRef.current) {
+      console.log('[VM] Requisição já em andamento, ignorando duplicata')
+      return
+    }
+
+    vmResourcesLoadingRef.current = true
+    const requestId = `VM-REQ-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+    console.log(`[${requestId}] Carregando recursos da VM`)
+    const startTime = Date.now()
+    
     try {
       const resources = await api.getVMResources()
+      const elapsed = Date.now() - startTime
+      console.log(`[${requestId}] Recursos da VM carregados em ${elapsed}ms`)
       
       setCachedData(prev => {
         const now = new Date()
@@ -456,7 +554,16 @@ export const DashboardCacheProvider = ({ children }) => {
         }
       })
     } catch (error) {
-      console.error('Erro ao carregar recursos da VM:', error)
+      const elapsed = Date.now() - startTime
+      console.error(`[${requestId}] Erro ao carregar recursos da VM (${elapsed}ms):`, {
+        requestId,
+        message: error.message,
+        elapsed,
+        error
+      })
+    } finally {
+      // Sempre liberar o lock, mesmo em caso de erro
+      vmResourcesLoadingRef.current = false
     }
   }
 
@@ -478,7 +585,9 @@ export const DashboardCacheProvider = ({ children }) => {
           }
           
           // Iniciar intervalos mesmo se não estiver conectado (vai tentar reconectar)
+          // Reduzir frequência para evitar sobrecarga - cache do backend já atualiza em background
           dataIntervalRef.current = setInterval(async () => {
+            const intervalId = `INTERVAL-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
             try {
               const status = await api.getConnectionStatus()
               const isConnected = status.ssh_connected && status.mysql_connected
@@ -486,11 +595,16 @@ export const DashboardCacheProvider = ({ children }) => {
                 await loadDashboardData(isConnected)
               }
             } catch (error) {
-              console.error('Erro ao atualizar dados do dashboard:', error)
+              console.error(`[${intervalId}] Erro ao atualizar dados do dashboard:`, {
+                intervalId,
+                message: error.message,
+                error
+              })
             }
-          }, 10000) // A cada 10 segundos
+          }, 15000) // A cada 15 segundos (cache do backend atualiza a cada 10s)
           
           resourcesIntervalRef.current = setInterval(async () => {
+            const intervalId = `VM-INTERVAL-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
             try {
               const status = await api.getConnectionStatus()
               const isConnected = status.ssh_connected && status.mysql_connected
@@ -498,9 +612,13 @@ export const DashboardCacheProvider = ({ children }) => {
                 await loadVMResources(isConnected)
               }
             } catch (error) {
-              console.error('Erro ao atualizar recursos da VM:', error)
+              console.error(`[${intervalId}] Erro ao atualizar recursos da VM:`, {
+                intervalId,
+                message: error.message,
+                error
+              })
             }
-          }, 10000) // A cada 10 segundos
+          }, 15000) // A cada 15 segundos (cache do backend atualiza a cada 5s)
         } catch (error) {
           console.error('Erro ao verificar conexão inicial:', error)
         }

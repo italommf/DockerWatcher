@@ -26,6 +26,7 @@ class ApiConfig(AppConfig):
         try:
             from backend.services.service_manager import initialize_services
             from backend.services.watcher_service import WatcherService
+            from backend.services.polling_service import PollingService
             
             def initialize_all_services():
                 """Inicializa serviços e depois inicia o watcher."""
@@ -37,7 +38,7 @@ class ApiConfig(AppConfig):
                     # Verificar se o arquivo de configuração existe antes de tentar conectar
                     try:
                         from pathlib import Path
-                        config_path = Path(__file__).parent.parent.parent.parent / 'shared' / 'config.ini'
+                        config_path = Path(__file__).resolve().parent.parent.parent / 'shared' / 'config.ini'
                         if not config_path.exists():
                             logger.warning("Arquivo config.ini não encontrado. Serviços não serão inicializados automaticamente.")
                             return
@@ -56,8 +57,17 @@ class ApiConfig(AppConfig):
                         logger.warning(traceback.format_exc())
                         # Continuar mesmo se falhar - os serviços serão conectados sob demanda
                     
-                    # Aguardar mais um pouco antes de iniciar o watcher
+                    # Aguardar mais um pouco antes de iniciar os loops em background
                     time.sleep(2)
+                    
+                    try:
+                        poller = PollingService()
+                        poller.start()
+                        logger.info("✓ PollingService iniciado automaticamente")
+                    except Exception as e:
+                        logger.warning(f"Erro ao iniciar PollingService: {e}")
+                        import traceback
+                        logger.warning(traceback.format_exc())
                     
                     try:
                         # Iniciar WatcherService

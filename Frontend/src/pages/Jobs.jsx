@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import {
   Box,
   Typography,
@@ -16,14 +16,16 @@ import {
   DialogActions,
   IconButton,
   TextField,
+  InputAdornment,
 } from '@mui/material'
-import { PlayArrow, Stop, Visibility, Close, Refresh as RefreshIcon } from '@mui/icons-material'
+import { PlayArrow, Stop, Visibility, Close, Refresh as RefreshIcon, Search as SearchIcon } from '@mui/icons-material'
 import api from '../services/api'
 import { useSnackbar } from 'notistack'
 
 export default function Jobs({ isConnected = true, onReconnect }) {
   const [jobs, setJobs] = useState([])
   const [loading, setLoading] = useState(true)
+  const [searchTerm, setSearchTerm] = useState('')
   const [dialogOpen, setDialogOpen] = useState(false)
   const [selectedJob, setSelectedJob] = useState(null)
   const [logsDialogOpen, setLogsDialogOpen] = useState(false)
@@ -32,6 +34,18 @@ export default function Jobs({ isConnected = true, onReconnect }) {
   const [logsLoading, setLogsLoading] = useState(false)
   const [tail, setTail] = useState(100)
   const { enqueueSnackbar } = useSnackbar()
+
+  // Filtrar jobs baseado no termo de pesquisa
+  const filteredJobs = useMemo(() => {
+    if (!searchTerm.trim()) {
+      return jobs
+    }
+    const term = searchTerm.toLowerCase()
+    return jobs.filter(job => 
+      job.name?.toLowerCase().includes(term) ||
+      job.nome_rpa?.toLowerCase().includes(term)
+    )
+  }, [jobs, searchTerm])
 
   useEffect(() => {
     if (isConnected) {
@@ -354,79 +368,167 @@ export default function Jobs({ isConnected = true, onReconnect }) {
         </Alert>
       )}
 
-      <Grid container spacing={3}>
-        {jobs.length === 0 ? (
+      {/* Barra de pesquisa */}
+      <Box sx={{ mb: 3 }}>
+        <TextField
+          fullWidth
+          placeholder="Pesquisar por nome do container ou RPA..."
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          InputProps={{
+            startAdornment: (
+              <InputAdornment position="start">
+                <SearchIcon sx={{ color: '#CBD5E1' }} />
+              </InputAdornment>
+            ),
+          }}
+          sx={{
+            '& .MuiOutlinedInput-root': {
+              backgroundColor: 'rgba(30, 41, 59, 0.5)',
+              '& fieldset': {
+                borderColor: 'rgba(255, 255, 255, 0.1)',
+              },
+              '&:hover fieldset': {
+                borderColor: 'rgba(255, 255, 255, 0.2)',
+              },
+              '&.Mui-focused fieldset': {
+                borderColor: 'rgba(99, 102, 241, 0.5)',
+              },
+            },
+            '& .MuiInputBase-input': {
+              color: '#F8FAFC',
+            },
+          }}
+        />
+      </Box>
+
+      <Grid container spacing={2}>
+        {filteredJobs.length === 0 ? (
           <Grid item xs={12}>
             <Card>
               <CardContent>
                 <Typography variant="body1" color="text.secondary" align="center">
-                  Nenhum job ativo no momento
+                  {searchTerm ? 'Nenhum container encontrado com o termo pesquisado' : 'Nenhum job ativo no momento'}
                 </Typography>
               </CardContent>
             </Card>
           </Grid>
         ) : (
-          jobs.map((job) => (
-            <Grid item xs={12} key={job.id || job.name}>
-              <Card>
-                <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
-                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 1.5 }}>
-                    <Box sx={{ flex: 1 }}>
-                      <Typography variant="h6" sx={{ mb: 0.5, fontSize: '1.1rem' }}>
+          filteredJobs.map((job) => (
+            <Grid item xs={12} sm={6} md={4} lg={3} key={job.id || job.name}>
+              <Card 
+                sx={{ 
+                  height: '100%',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  backgroundColor: 'rgba(30, 41, 59, 0.5)',
+                  border: '1px solid rgba(255, 255, 255, 0.1)',
+                  transition: 'all 0.2s',
+                  '&:hover': {
+                    borderColor: 'rgba(255, 255, 255, 0.2)',
+                    transform: 'translateY(-2px)',
+                    boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
+                  },
+                }}
+              >
+                <CardContent sx={{ p: 2, flex: 1, display: 'flex', flexDirection: 'column' }}>
+                  {/* Nome e Status */}
+                  <Box sx={{ mb: 1.5 }}>
+                    <Typography 
+                      variant="h6" 
+                      sx={{ 
+                        mb: 1, 
+                        fontSize: '0.95rem',
+                        fontWeight: 600,
+                        color: '#F8FAFC',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      }}
+                      title={job.name || 'N/A'}
+                    >
                         {job.name || 'N/A'}
                       </Typography>
-                      <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap' }}>
-                        <Chip label={job.status} color={job.statusColor} size="small" />
-                        <Typography variant="caption" color="text.secondary">
-                          RPA: {job.nome_rpa || 'N/A'}
-                        </Typography>
-                      </Box>
+                    <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center', flexWrap: 'wrap' }}>
+                      <Chip 
+                        label={job.status} 
+                        color={job.statusColor} 
+                        size="small" 
+                        sx={{ fontSize: '0.7rem', height: 20 }}
+                      />
                     </Box>
+                  </Box>
+
+                  {/* Informações compactas */}
+                  <Box sx={{ flex: 1, mb: 1.5 }}>
+                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
+                      <strong>RPA:</strong> {job.nome_rpa || 'N/A'}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
+                      <strong>Ativos:</strong> {job.active || 0}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
+                      <strong>Falhados:</strong> {job.failed || 0}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+                      <strong>Completados:</strong> {job.completions || 0}
+                    </Typography>
+                    {job.start_time && (
+                      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+                        <strong>Iniciado:</strong> {new Date(job.start_time).toLocaleString('pt-BR', { 
+                          day: '2-digit', 
+                          month: '2-digit', 
+                          hour: '2-digit', 
+                          minute: '2-digit' 
+                        })}
+                      </Typography>
+                    )}
+                  </Box>
+
+                  {/* Botões */}
+                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, mt: 'auto' }}>
                     <Button
                       variant="outlined"
                       size="small"
+                      fullWidth
                       startIcon={<Visibility />}
                       onClick={() => handleViewLogs(job)}
-                      sx={{ minWidth: 120 }}
+                      sx={{ 
+                        fontSize: '0.75rem',
+                        py: 0.5,
+                        borderColor: 'rgba(255, 255, 255, 0.2)',
+                        color: '#CBD5E1',
+                        '&:hover': {
+                          borderColor: 'rgba(99, 102, 241, 0.5)',
+                          backgroundColor: 'rgba(99, 102, 241, 0.1)',
+                        },
+                      }}
                     >
                       Ver Logs
                     </Button>
-                  </Box>
-                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
-                    <Box sx={{ flex: 1 }}>
-                      <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
-                        Pods Ativos: {job.active || 0}
-                      </Typography>
-                      <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
-                        Pods Falhados: {job.failed || 0}
-                      </Typography>
-                      <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
-                        Completados: {job.completions || 0}
-                      </Typography>
-                      {job.start_time && (
-                        <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
-                          Iniciado: {new Date(job.start_time).toLocaleString('pt-BR')}
-                        </Typography>
-                      )}
-                      {job.completion_time && (
-                        <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
-                          Finalizado: {new Date(job.completion_time).toLocaleString('pt-BR')}
-                        </Typography>
-                      )}
-                      <Typography variant="body2" color="text.secondary">
-                        Namespace: {job.namespace || 'default'}
-                      </Typography>
-                    </Box>
                     <Button
                       variant="outlined"
                       color="error"
                       size="small"
+                      fullWidth
                       startIcon={<Stop />}
                       disabled={job.active === 0}
                       onClick={() => handleStopJob(job)}
-                      sx={{ minWidth: 120, ml: 2 }}
+                      sx={{ 
+                        fontSize: '0.75rem',
+                        py: 0.5,
+                        borderColor: 'rgba(239, 68, 68, 0.3)',
+                        '&:hover': {
+                          borderColor: 'rgba(239, 68, 68, 0.5)',
+                          backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                        },
+                        '&:disabled': {
+                          borderColor: 'rgba(255, 255, 255, 0.1)',
+                          color: 'rgba(255, 255, 255, 0.3)',
+                        },
+                      }}
                     >
-                      Parar Instancia Atual
+                      Parar
                     </Button>
                   </Box>
                 </CardContent>

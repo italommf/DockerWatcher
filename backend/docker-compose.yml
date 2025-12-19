@@ -1,0 +1,23 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: docker-watcher-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      # Montar pasta shared para acessar config.ini
+      - ../shared:/app/shared:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+    networks:
+      - docker-watcher-network
+
+networks:
+  docker-watcher-network:
+    driver: bridge
+

@@ -20,7 +20,21 @@ class PollingService:
     em intervalos fixos e armazená-los em cache.
     """
 
-    def __init__(self, vm_interval: int = 5, db_interval: int = 10):
+    def __init__(self, vm_interval: int = None, db_interval: int = None):
+        # Usar configurações do config.ini se não fornecidas
+        if vm_interval is None or db_interval is None:
+            try:
+                from backend.config.ssh_config import get_backend_config
+                backend_config = get_backend_config()
+                if vm_interval is None:
+                    vm_interval = backend_config.get('polling_interval_vm', 10)
+                if db_interval is None:
+                    db_interval = backend_config.get('polling_interval_db', 10)
+            except Exception as e:
+                logger.warning(f"Erro ao ler configurações do backend, usando valores padrão: {e}")
+                vm_interval = vm_interval or 10
+                db_interval = db_interval or 10
+        
         self.vm_interval = vm_interval
         self.db_interval = db_interval
         self._running = False
@@ -156,10 +170,10 @@ class PollingService:
             self._sleep_interval(wait_time)
 
     def _collect_rpa_names(self) -> Set[str]:
-        """Coleta apenas nomes de RPAs que estão ativos (status='active')."""
+        """Coleta nomes de RPAs que estão ativos ou rodando (jobs/pods)."""
         nomes: Set[str] = set()
         
-        # Primeiro, coletar todos os RPAs ativos do banco de dados
+        # 1. Coletar RPAs ativos do banco local
         rpas_ativos: Set[str] = set()
         try:
             from api.models import RPA
@@ -168,47 +182,52 @@ class PollingService:
         except Exception as e:
             logger.debug(f"Não foi possível coletar RPAs do banco local: {e}")
 
-        # Filtrar nomes do cache de execuções para incluir apenas RPAs ativos
-        exec_cache = CacheService.get_data(CacheKeys.EXECUTIONS, {})
-        if isinstance(exec_cache, dict) and rpas_ativos:
-            # Normalizar nomes para comparação (lowercase, sem hífens/underscores)
-            rpas_ativos_normalizados = {
-                nome.replace("-", "").replace("_", "").lower(): nome 
-                for nome in rpas_ativos
-            }
-            
-            for nome_cache in exec_cache.keys():
-                nome_normalizado = nome_cache.replace("-", "").replace("_", "").lower()
-                # Verificar se o nome do cache corresponde a algum RPA ativo
-                if nome_normalizado in rpas_ativos_normalizados:
-                    # Usar o nome original do banco (pode ter diferenças de formatação)
-                    nomes.add(rpas_ativos_normalizados[nome_normalizado])
-                elif nome_cache.lower() in {rpa.lower() for rpa in rpas_ativos}:
-                    # Comparação direta (case-insensitive)
-                    nomes.add(nome_cache)
+        # Map lower -> original for active RPAs
+        rpas_ativos_lower = {rpa.lower(): rpa for rpa in rpas_ativos}
 
-        # Filtrar nomes dos jobs para incluir apenas RPAs ativos
-        if rpas_ativos:
-            jobs_cache = CacheService.get_data(CacheKeys.JOBS, []) or []
-            rpas_ativos_lower = {rpa.lower() for rpa in rpas_ativos}
+        # 2. Coletar nomes dos jobs rodando
+        jobs_cache = CacheService.get_data(CacheKeys.JOBS, []) or []
+        import re
+        
+        for job in jobs_cache:
+            labels = job.get("labels", {}) if isinstance(job, dict) else {}
+            # Tentar pegar nome limpo dos labels primeiro
+            nome_robo = (
+                labels.get("nome_robo")
+                or labels.get("nome-robo")
+                or labels.get("app")
+                or job.get("name", "")
+            )
             
-            for job in jobs_cache:
-                labels = job.get("labels", {}) if isinstance(job, dict) else {}
-                nome_robo = (
-                    labels.get("nome_robo")
-                    or labels.get("nome-robo")
-                    or labels.get("app")
-                    or job.get("name", "").replace("rpa-job-", "")
-                )
-                if nome_robo:
-                    nome_robo_lower = nome_robo.lower()
-                    # Verificar se o nome do job corresponde a algum RPA ativo
-                    if nome_robo_lower in rpas_ativos_lower:
-                        # Encontrar o nome original do banco (pode ter diferenças de formatação)
-                        for rpa_ativo in rpas_ativos:
-                            if rpa_ativo.lower() == nome_robo_lower:
-                                nomes.add(rpa_ativo)
-                                break
+            if nome_robo:
+                candidates = set()
+                candidates.add(nome_robo)
+                
+                # Tentar limpar o nome (remover prefixos/sufixos comuns)
+                clean_name = nome_robo
+                
+                # Remover prefixos
+                for prefix in ['rpa-cronjob-', 'rpa-job-', 'cronjob-', 'job-', 'rpa-']:
+                    if clean_name.startswith(prefix):
+                        clean_name = clean_name[len(prefix):]
+                        break
+                
+                # Remover sufixos (hashes, timestamps)
+                # Hash duplo K8s (ex: -w5mwl-tt5tw)
+                clean_name = re.sub(r'-[a-z0-9]{4,10}-[a-z0-9]{4,10}$', '', clean_name) 
+                # Hash simples ou timestamp (ex: -12345678, -abcde)
+                clean_name = re.sub(r'-[a-z0-9]+$', '', clean_name)
+                
+                if clean_name and clean_name != nome_robo:
+                    candidates.add(clean_name)
+
+                # Processar candidatos
+                for candidate in candidates:
+                    # Verificar se bate com algum RPA ativo (para usar o caso correto)
+                    if candidate.lower() in rpas_ativos_lower:
+                        nomes.add(rpas_ativos_lower[candidate.lower()])
+                    else:
+                        nomes.add(candidate)
 
         return {nome for nome in nomes if nome}
 
@@ -397,22 +416,55 @@ class PollingService:
         except Exception as e:
             logger.debug(f"Erro ao processar deployments para cache: {e}")
 
-    def _update_connection_status(self, *, ssh: Optional[bool] = None, ssh_error: Optional[str] = None,
-                                   mysql: Optional[bool] = None, mysql_error: Optional[str] = None):
+    def _update_connection_status(
+        self,
+        *,
+        ssh: Optional[bool] = None,
+        ssh_error: Optional[str] = None,
+        mysql: Optional[bool] = None,
+        mysql_error: Optional[str] = None,
+    ):
+        """
+        Atualiza o status de conexão no cache.
+
+        Regras importantes:
+        - Se ssh/mysql forem True, limpamos o erro correspondente (ssh_error/mysql_error = None).
+        - Se ssh/mysql forem False, mantemos/atualizamos a mensagem de erro recebida.
+        """
         updated = dict(self._connection_status)
         changed = False
-        if ssh is not None and ssh != updated['ssh_connected']:
+
+        if ssh is not None and ssh != updated.get('ssh_connected'):
             updated['ssh_connected'] = ssh
             changed = True
-        if ssh_error is not None and ssh_error != updated['ssh_error']:
-            updated['ssh_error'] = ssh_error
-            changed = True
-        if mysql is not None and mysql != updated['mysql_connected']:
+        if mysql is not None and mysql != updated.get('mysql_connected'):
             updated['mysql_connected'] = mysql
             changed = True
-        if mysql_error is not None and mysql_error != updated['mysql_error']:
-            updated['mysql_error'] = mysql_error
-            changed = True
+
+        # Erros: permitir limpar quando conexão estiver OK
+        if ssh is True:
+            if updated.get('ssh_error') is not None:
+                updated['ssh_error'] = None
+                changed = True
+        elif ssh is False:
+            if ssh_error is not None and ssh_error != updated.get('ssh_error'):
+                updated['ssh_error'] = ssh_error
+                changed = True
+            elif ssh_error is None and updated.get('ssh_error') is None:
+                # manter None
+                pass
+
+        if mysql is True:
+            if updated.get('mysql_error') is not None:
+                updated['mysql_error'] = None
+                changed = True
+        elif mysql is False:
+            if mysql_error is not None and mysql_error != updated.get('mysql_error'):
+                updated['mysql_error'] = mysql_error
+                changed = True
+            elif mysql_error is None and updated.get('mysql_error') is None:
+                pass
+
         if changed:
             self._connection_status = updated
             CacheService.update(CacheKeys.CONNECTION_STATUS, dict(updated))

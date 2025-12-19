@@ -4,6 +4,7 @@ from rest_framework import status
 from backend.services.cache_service import CacheKeys, CacheService
 from backend.services.service_manager import get_ssh_service
 from backend.services.vm_resource_service import fetch_vm_resources
+from backend.services.pod_resource_service import fetch_pod_resources
 import logging
 
 logger = logging.getLogger(__name__)
@@ -52,5 +53,40 @@ def vm_resources(request):
             'memoria': {'total': 0, 'livre': 0, 'usada': 0, 'total_gb': 0, 'livre_gb': 0, 'usada_gb': 0},
             'armazenamento': {'total': 0, 'livre': 0, 'usado': 0, 'total_gb': 0, 'livre_gb': 0, 'usado_gb': 0},
             'cpu': {'total': 100, 'usado': 0, 'livre': 100}
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['GET'])
+def pod_resources(request):
+    """Obtém informações de recursos (CPU, memória) dos pods ativos."""
+    import time
+    request_id = getattr(request, '_request_id', 'UNKNOWN')
+    start_time = time.time()
+    
+    logger.info(f"[{request_id}] GET /api/resources/pods/ - Iniciando")
+    
+    try:
+        ssh_service = get_ssh_service()
+        
+        fetch_start = time.time()
+        pods_metrics = fetch_pod_resources(ssh_service)
+        fetch_elapsed = time.time() - fetch_start
+        logger.info(f"[{request_id}] fetch_pod_resources concluído em {fetch_elapsed:.3f}s - {len(pods_metrics)} pods")
+        
+        elapsed = time.time() - start_time
+        logger.info(f"[{request_id}] Recursos dos pods obtidos em {elapsed:.3f}s")
+        
+        return Response({
+            'pods': pods_metrics,
+            'count': len(pods_metrics),
+            'timestamp': time.time()
+        }, status=status.HTTP_200_OK)
+    except Exception as e:
+        elapsed = time.time() - start_time
+        logger.error(f"[{request_id}] Erro ao obter recursos dos pods após {elapsed:.3f}s: {e}", exc_info=True)
+        return Response({
+            'error': str(e),
+            'pods': [],
+            'count': 0
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 

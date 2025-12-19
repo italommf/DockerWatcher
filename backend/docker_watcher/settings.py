@@ -14,7 +14,8 @@ SECRET_KEY = 'django-insecure-docker-watcher-dev-key-change-in-production'
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ['127.0.0.1', 'localhost']
+# Permitir conexões da rede privada
+ALLOWED_HOSTS = ['*']  # Em produção, restringir para IPs específicos da rede privada
 
 # Application definition
 INSTALLED_APPS = [
@@ -63,12 +64,36 @@ WSGI_APPLICATION = 'docker_watcher.wsgi.application'
 
 # Database
 # https://docs.djangoproject.com/en/stable/ref/settings/#databases
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+# Usar MySQL externo (configurado via config.ini)
+try:
+    from backend.config.ssh_config import get_mysql_config
+    mysql_config = get_mysql_config()
+    
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.mysql',
+            'NAME': mysql_config['database'],
+            'USER': mysql_config['user'],
+            'PASSWORD': mysql_config['password'],
+            'HOST': mysql_config['host'],
+            'PORT': mysql_config['port'],
+            'OPTIONS': {
+                'charset': 'utf8mb4',
+                'init_command': "SET sql_mode='STRICT_TRANS_TABLES'",
+            },
+        }
     }
-}
+except Exception as e:
+    # Fallback para SQLite se não conseguir ler config.ini (desenvolvimento)
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.warning(f"Erro ao configurar MySQL, usando SQLite como fallback: {e}")
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': BASE_DIR / 'db.sqlite3',
+        }
+    }
 
 # Password validation
 # https://docs.djangoproject.com/en/stable/ref/settings/#auth-password-validators
@@ -112,12 +137,16 @@ REST_FRAMEWORK = {
 }
 
 # CORS
+# Permitir conexões da rede privada (ajustar conforme necessário)
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
     "http://localhost:5173",
     "http://127.0.0.1:5173",
 ]
+
+# Permitir todas as origens da rede privada (ajustar em produção se necessário)
+CORS_ALLOW_ALL_ORIGINS = True  # Em produção, desabilitar e usar CORS_ALLOWED_ORIGINS com IPs específicos
 
 CORS_ALLOW_CREDENTIALS = True
 

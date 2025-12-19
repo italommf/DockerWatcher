@@ -1,6 +1,7 @@
 import yaml
 import logging
 import re
+import time
 from typing import List, Dict, Optional
 from backend.services.ssh_service import SSHService
 
@@ -137,21 +138,75 @@ class KubernetesService:
             
             import json
             data = json.loads(stdout)
+            
+            # Buscar pods para enriquecer status e imagem
+            all_pods = self.get_pods(label_selector)
+            pods_by_job = {}
+            for pod in all_pods:
+                job_name = pod.get('labels', {}).get('job-name') or pod.get('metadata', {}).get('ownerReferences', [{}])[0].get('name')
+                if job_name:
+                    if job_name not in pods_by_job:
+                        pods_by_job[job_name] = []
+                    pods_by_job[job_name].append(pod)
+
             jobs = []
             
             for item in data.get('items', []):
                 metadata = item.get('metadata', {})
                 status = item.get('status', {})
+                spec = item.get('spec', {})
                 
+                name = metadata.get('name', '')
+                
+                # Determinar status e imagem baseados nos pods
+                job_pods = pods_by_job.get(name, [])
+                job_status = 'Pending' # Default
+                image = ''
+                
+                # Tentar pegar imagem do template do job se não tiver pods
+                if not image:
+                    try:
+                        image = spec['template']['spec']['containers'][0]['image']
+                    except:
+                        pass
+
+                if status.get('active', 0) > 0:
+                    job_status = 'Running'
+                elif status.get('failed', 0) > 0:
+                    job_status = 'Failed'
+                elif status.get('succeeded', 0) > 0:
+                    job_status = 'Succeeded'
+
+                # Refinar status com base no pod mais recente/relevante
+                pod_name = ''
+                if job_pods:
+                    # Pega o primeiro pod (geralmente só tem 1 ativo por job neste caso de uso)
+                    pod = job_pods[0]
+                    pod_name = pod.get('name', '')
+                    # Se tiver pod, usa a imagem dele que é a real em execução
+                    if pod.get('containers'):
+                        # A logica de get_pods já retorna 'containers' processados? 
+                        # get_pods retorna dict customizado. Vamos verificar o que get_pods retorna.
+                        # get_pods retorna lista de dicts com 'status' (string) e 'containers' (lista).
+                        # pod['status'] já é processado por _get_pod_status!
+                         job_status = pod['status']
+                    
+                    # Tentar extrair imagem do status do container do pod se não pegou do template
+                    # Mas get_pods não retorna image nos containers, vou ter que confiar no template ou adicionar image ao get_pods.
+                    # Vamos manter a imagem do template que é mais garantido de existir no objeto Job.
+
                 job_info = {
-                    'name': metadata.get('name', ''),
+                    'name': name,
                     'namespace': metadata.get('namespace', 'default'),
                     'labels': metadata.get('labels', {}),
                     'completions': status.get('succeeded', 0),
                     'active': status.get('active', 0),
                     'failed': status.get('failed', 0),
                     'start_time': status.get('startTime', ''),
-                    'completion_time': status.get('completionTime', '')
+                    'completion_time': status.get('completionTime', ''),
+                    'status': job_status,
+                    'image': image,
+                    'pod_name': pod_name
                 }
                 
                 jobs.append(job_info)
@@ -348,13 +403,45 @@ class KubernetesService:
                 spec = item.get('spec', {})
                 status = item.get('status', {})
                 
+                # Extrair informações do container
+                job_template = spec.get('jobTemplate', {})
+                pod_spec = job_template.get('spec', {}).get('template', {}).get('spec', {})
+                containers = pod_spec.get('containers', [])
+                
+                # Obter imagem do primeiro container
+                image = ''
+                nome_robo = ''
+                memory_limit = ''
+                if containers:
+                    first_container = containers[0]
+                    image = first_container.get('image', '')
+                    # Extrair nome_robo das variáveis de ambiente
+                    env_vars = first_container.get('env', [])
+                    for env_var in env_vars:
+                        if env_var.get('name') == 'NOME_ROBO':
+                            nome_robo = env_var.get('value', '')
+                            break
+                    # Extrair memory limit
+                    resources = first_container.get('resources', {})
+                    limits = resources.get('limits', {})
+                    memory_limit = limits.get('memory', '')
+                
+                # Extrair timezone e ttl
+                timezone = spec.get('timeZone', 'America/Sao_Paulo')
+                ttl_seconds = job_template.get('spec', {}).get('ttlSecondsAfterFinished', 60)
+                
                 cronjob_info = {
                     'name': metadata.get('name', ''),
                     'namespace': metadata.get('namespace', 'default'),
                     'schedule': spec.get('schedule', ''),
                     'suspended': spec.get('suspend', False),
                     'last_schedule_time': status.get('lastScheduleTime', ''),
-                    'last_successful_time': status.get('lastSuccessfulTime', '')
+                    'last_successful_time': status.get('lastSuccessfulTime', ''),
+                    'image': image,
+                    'nome_robo': nome_robo,
+                    'memory_limit': memory_limit,
+                    'timezone': timezone,
+                    'ttl_seconds_after_finished': ttl_seconds
                 }
                 
                 cronjobs.append(cronjob_info)
@@ -436,7 +523,8 @@ class KubernetesService:
     
     def create_job_from_cronjob(self, cronjob_name: str) -> bool:
         """Cria um job manual a partir de um cronjob (executar agora)."""
-        job_name = f"{cronjob_name}-manual-$(date +%s)"
+        timestamp = int(time.time())
+        job_name = f"{cronjob_name}-manual-{timestamp}"
         cmd = f"kubectl create job --from=cronjob/{cronjob_name} {job_name}"
         
         try:
@@ -446,6 +534,7 @@ class KubernetesService:
                 logger.error(f"Erro ao criar job do cronjob: {stderr}")
                 return False
             
+            logger.info(f"Job '{job_name}' criado com sucesso a partir do cronjob '{cronjob_name}'")
             return True
         except Exception as e:
             logger.error(f"Erro ao criar job do cronjob: {e}")

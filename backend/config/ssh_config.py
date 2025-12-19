@@ -55,8 +55,28 @@ def get_paths_config():
 def get_api_config():
     """Retorna configurações da API."""
     config = load_config()
+    # Priorizar [BACKEND] se existir, senão usar [API] para compatibilidade
+    if config.has_section('BACKEND'):
+        return {
+            'host': config.get('BACKEND', 'bind_host', fallback='0.0.0.0'),
+            'port': config.getint('BACKEND', 'bind_port', fallback=8000),
+        }
+    else:
+        return {
+            'host': config.get('API', 'host', fallback='127.0.0.1'),
+            'port': config.getint('API', 'port', fallback=8000),
+        }
+
+def get_backend_config():
+    """Retorna configurações do backend (polling intervals, etc)."""
+    config = load_config()
+    if config.has_section('BACKEND'):
+        return {
+            'polling_interval_vm': config.getint('BACKEND', 'polling_interval_vm', fallback=10),
+            'polling_interval_db': config.getint('BACKEND', 'polling_interval_db', fallback=10),
+        }
     return {
-        'host': config.get('API', 'host', fallback='127.0.0.1'),
-        'port': config.getint('API', 'port', fallback=8000),
+        'polling_interval_vm': 10,
+        'polling_interval_db': 10,
     }
 

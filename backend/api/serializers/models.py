@@ -9,6 +9,9 @@ class JobSerializer(serializers.Serializer):
     failed = serializers.IntegerField()
     start_time = serializers.CharField(required=False, allow_null=True)
     completion_time = serializers.CharField(required=False, allow_null=True)
+    status = serializers.CharField(required=False, allow_null=True)
+    image = serializers.CharField(required=False, allow_null=True)
+    pod_name = serializers.CharField(required=False, allow_null=True)
 
 class PodSerializer(serializers.Serializer):
     name = serializers.CharField()
@@ -65,18 +68,35 @@ class CronjobSerializer(serializers.Serializer):
     last_successful_time = serializers.CharField(required=False, allow_null=True)
     apelido = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     tags = serializers.ListField(child=serializers.CharField(), required=False, allow_null=True)
+    image = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    nome_robo = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    memory_limit = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    timezone = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    ttl_seconds_after_finished = serializers.IntegerField(required=False)
 
 class CreateCronjobSerializer(serializers.Serializer):
     name = serializers.CharField()
     schedule = serializers.CharField()
     timezone = serializers.CharField(default='America/Sao_Paulo')
-    nome_robo = serializers.CharField()
-    docker_image = serializers.CharField()
+    nome_robo = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    docker_repository = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    docker_tag = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    docker_image = serializers.CharField(required=False, allow_blank=True, allow_null=True)  # Mantido para compatibilidade
     memory_limit = serializers.CharField(default='256Mi')
     ttl_seconds_after_finished = serializers.IntegerField(default=60, required=False)
     dependente_de_execucoes = serializers.BooleanField(default=True)
     apelido = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     tags = serializers.ListField(child=serializers.CharField(), required=False, allow_null=True)
+
+class UpdateCronjobSerializer(serializers.Serializer):
+    schedule = serializers.CharField(required=False)
+    timezone = serializers.CharField(required=False)
+    nome_robo = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    docker_repository = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    docker_tag = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    docker_image = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    memory_limit = serializers.CharField(required=False)
+    ttl_seconds_after_finished = serializers.IntegerField(required=False)
 
 class DeploymentSerializer(serializers.Serializer):
     name = serializers.CharField()

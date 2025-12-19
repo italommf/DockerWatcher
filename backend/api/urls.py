@@ -20,5 +20,6 @@ urlpatterns = [
     path('config/', config.get_config, name='config-get'),
     path('config/save/', config.save_config, name='config-save'),
     path('resources/vm/', resources.vm_resources, name='vm-resources'),
+    path('resources/pods/', resources.pod_resources, name='pod-resources'),
 ]
 

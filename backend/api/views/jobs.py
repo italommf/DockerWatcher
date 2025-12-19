@@ -123,43 +123,51 @@ class JobViewSet(viewsets.ViewSet):
             
             # Se não encontrou nos labels, tentar extrair do nome do job
             if not nome_robo and job_name:
-                # Padrão comum: rpa-job-{nome_rpa}-{hash}
-                match = re.search(r'rpa-job-([^-]+)', job_name.lower())
-                if match:
-                    nome_robo = match.group(1)
-                else:
-                    # Padrão de cronjob: rpa-cronjob-{nome_rpa_completo}-{hash}
-                    # O hash geralmente é um número no final, então pegamos tudo até o último hífen seguido de número
-                    # Exemplo: rpa-cronjob-painel-de-processos-acessorias-29387700
-                    # Deve extrair: painel-de-processos-acessorias
-                    match = re.search(r'rpa-cronjob-(.+)-(\d+)$', job_name.lower())
-                    if match:
-                        # Pegar o nome completo antes do hash (grupo 1)
-                        nome_robo = match.group(1)
-                    else:
-                        # Tentar padrão alternativo sem hash no final (fallback)
-                        match = re.search(r'rpa-cronjob-(.+?)(?:-(\d+))?$', job_name.lower())
-                        if match:
-                            nome_robo = match.group(1)
-                        else:
-                            # Tentar outros padrões
-                            match = re.search(r'job-([^-]+)', job_name.lower())
-                            if match:
-                                nome_robo = match.group(1)
+                normalized_name = job_name.lower()
+                
+                # 1. Remover prefixos conhecidos (ordem importa: strings mais longas primeiro)
+                for prefix in ['rpa-cronjob-', 'rpa-job-', 'cronjob-', 'job-', 'rpa-']:
+                    if normalized_name.startswith(prefix):
+                        normalized_name = normalized_name[len(prefix):]
+                        break
+                
+                # 2. Remover sufixos de hash/timestamp
+                # Remove timestamps numéricos ou hashes hexadecimais no final
+                # Ex: -1734567890 (cronjob) ou -w5mwl-tt5tw (job k8s) ou -abc12 (pod)
+                
+                # Remover padrão de hash duplo do K8s (ex: -w5mwl-tt5tw)
+                normalized_name = re.sub(r'-[a-z0-9]{4,10}-[a-z0-9]{4,10}$', '', normalized_name)
+                
+                # Remover padrão de timestamp ou hash simples (ex: -123456 ou -abcde)
+                normalized_name = re.sub(r'-[a-z0-9]+$', '', normalized_name)
+                
+                nome_robo = normalized_name
             
-            # Se ainda não encontrou, usar 'unknown' mas logar para debug
-            if not nome_robo:
-                active = job.get('active', 0)
-                if active > 0:  # Só logar se tiver pods ativos
-                    unknown_jobs_info.append({
-                        'name': job_name,
-                        'labels': labels,
-                        'active': active
-                    })
-                nome_robo = 'unknown'
+            # 3. Formatar para exibição limpa (Title Case)
+            if nome_robo and nome_robo != 'unknown':
+                # Substituir separadores por espaços
+                display_name = nome_robo.replace('-', ' ').replace('_', ' ')
+                # Capitalizar cada palavra
+                display_name = ' '.join(word.capitalize() for word in display_name.split())
+                
+                # Usar o nome limpo como chave para agrupar
+                nome_robo = display_name
+            else:
+                 nome_robo = 'Unknown'
+            
+            
+            # Obter status do job
+            active = job.get('active', 0)  # Pods ativos do job
+            failed = job.get('failed', 0)  # Pods falhados do job
+            completions = job.get('completions', 0)  # Pods completados com sucesso
+
+            # Log de debug para identificação
+            if active > 0 or failed > 0:
+                 logger.info(f"[{request_id}] Job '{job_name}' -> RPA: '{nome_robo}'")
             
             # Normalizar para minúsculas para comparação consistente
-            nome_robo = nome_robo.lower()
+            # REMOVIDO: Agora usamos Title Case para exibição bonita
+            # nome_robo = nome_robo.lower()
             
             # Determinar o tipo baseado no nome original do job
             tipo = 'RPA'  # Padrão
@@ -180,11 +188,6 @@ class JobViewSet(viewsets.ViewSet):
                 # Se já existe, atualizar o tipo se necessário (priorizar Cronjob)
                 if tipo == 'Cronjob':
                     status_by_rpa[nome_robo]['tipo'] = 'Cronjob'
-            
-            # Obter status do job
-            active = job.get('active', 0)  # Pods ativos do job
-            failed = job.get('failed', 0)  # Pods falhados do job
-            completions = job.get('completions', 0)  # Pods completados com sucesso
             
             # Se tem pods ativos (running), adicionar aos running
             if active > 0:
@@ -214,23 +217,56 @@ class JobViewSet(viewsets.ViewSet):
             # Continuar mesmo se falhar ao buscar pods - os dados dos jobs já são suficientes
         
         # Buscar execuções pendentes do banco MySQL para todos os jobs identificados
-        # Coletar todos os nomes de RPA identificados (exceto 'unknown')
-        nomes_rpas_para_buscar = [nome for nome in status_by_rpa.keys() if nome != 'unknown']
-        
         execucoes_por_robo = CacheService.get_data(CacheKeys.EXECUTIONS, {}) or {}
+        
+        # Set de nomes normalizados já processados (para evitar duplicatas)
+        processed_normalized_names = set()
+        for nome in status_by_rpa.keys():
+            if nome != 'Unknown':
+                processed_normalized_names.add(nome.replace(' ', '').replace('-', '').replace('_', '').lower())
+
+        # 1. Atualizar execuções para jobs já identificados
         for nome_robo in status_by_rpa.keys():
-            if nome_robo == 'unknown':
+            if nome_robo == 'Unknown':
                 status_by_rpa[nome_robo]['execucoes_pendentes'] = 0
                 continue
+            
+            # Tentar encontrar correspondência exata ou normalizada
             execucoes = execucoes_por_robo.get(nome_robo, [])
             if not execucoes:
+                # Busca flexível
+                nome_robo_norm = nome_robo.replace(' ', '').replace('-', '').replace('_', '').lower()
                 for nome_db, execs in execucoes_por_robo.items():
-                    nome_robo_normalizado = nome_robo.replace('-', '').replace('_', '').lower()
-                    nome_db_normalizado = nome_db.replace('-', '').replace('_', '').lower()
-                    if nome_robo_normalizado == nome_db_normalizado:
+                    nome_db_norm = nome_db.replace(' ', '').replace('-', '').replace('_', '').lower()
+                    if nome_robo_norm == nome_db_norm:
                         execucoes = execs
                         break
+            
             status_by_rpa[nome_robo]['execucoes_pendentes'] = len(execucoes)
+
+        # 2. Adicionar RPAs que têm execuções pendentes mas não têm jobs rodando (status parado)
+        for nome_db, execs in execucoes_por_robo.items():
+            if not execs:
+                continue
+                
+            nome_db_norm = nome_db.replace(' ', '').replace('-', '').replace('_', '').lower()
+            if nome_db_norm not in processed_normalized_names:
+                # Adicionar entrada para este RPA
+                # Usar o nome do banco formatado como chave
+                display_name = nome_db.replace('-', ' ').replace('_', ' ')
+                display_name = ' '.join(word.capitalize() for word in display_name.split())
+                
+                status_by_rpa[display_name] = {
+                    'running': 0,
+                    'pending': 0,
+                    'error': 0,
+                    'failed': 0,
+                    'succeeded': 0,
+                    'tipo': 'RPA', # Assumir RPA se vem da fila de execuções
+                    'execucoes_pendentes': len(execs)
+                }
+                # Marcar como processado
+                processed_normalized_names.add(nome_db_norm)
         
         # Filtrar "unknown" se não tiver pods ativos (para não poluir o dashboard)
         # Mas manter se tiver pods ativos para o usuário ver
@@ -248,6 +284,12 @@ class JobViewSet(viewsets.ViewSet):
         
         elapsed = time.time() - start_time
         logger.info(f"[{request_id}] Status por RPA processado em {elapsed:.3f}s - {len(status_by_rpa)} RPAs encontrados")
+        
+        # Log detalhado do resultado FINAL
+        for rpa, status in status_by_rpa.items():
+            if status['running'] > 0 or status['execucoes_pendentes'] > 0:
+                logger.info(f"[{request_id}] RPA '{rpa}' -> Running: {status['running']}, Pending: {status['execucoes_pendentes']}")
+                
         if elapsed > 1.0:
             logger.warning(f"[{request_id}] ATENÇÃO: Método status demorou {elapsed:.3f}s (acima de 1s)")
         return Response(status_by_rpa)

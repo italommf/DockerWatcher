@@ -93,23 +93,58 @@ class WatcherService:
                     logger.debug("Cache de execuções vazio - aguardando próximo ciclo")
                 
                 if lista_nomes_rpas and execucoes_por_robo and self.k8s_service:
+                    # Obter jobs ativos do cache
+                    jobs_cache = CacheService.get_data(CacheKeys.JOBS, []) or []
+                    
+                    # Contar jobs ativos por RPA
+                    jobs_ativos_por_rpa = {}
+                    for job in jobs_cache:
+                        labels = job.get('labels', {}) if isinstance(job, dict) else {}
+                        nome_robo = (
+                            labels.get('nome_robo') or 
+                            labels.get('nome-robo') or 
+                            labels.get('app') or 
+                            ''
+                        ).lower()
+                        if nome_robo:
+                            active = job.get('active', 0)
+                            if active > 0:
+                                jobs_ativos_por_rpa[nome_robo] = jobs_ativos_por_rpa.get(nome_robo, 0) + active
+                    
                     for nome_do_rpa in lista_nomes_rpas:
-                        execs_do_rpa = execucoes_por_robo.get(nome_do_rpa) or []
-                        if execs_do_rpa:
-                            logger.info(f"Existem {len(execs_do_rpa)} execuções para o RPA {nome_do_rpa}")
+                        execs_do_rpa = execucoes_por_robo.get(nome_do_rpa, [])
+                        
+                        # SÓ criar container se houver execuções pendentes
+                        if execs_do_rpa and len(execs_do_rpa) > 0:
                             rpa_config = rpas_config.get(nome_do_rpa)
                             if rpa_config:
-                                try:
-                                    self.k8s_service.create_job(
-                                        nome_rpa=nome_do_rpa,
-                                        docker_tag=rpa_config.get('docker_tag', 'latest'),
-                                        qtd_ram_maxima=rpa_config.get('qtd_ram_maxima', 256),
-                                        qtd_max_instancias=rpa_config.get('qtd_max_instancias', 1),
-                                        utiliza_arquivos_externos=rpa_config.get('utiliza_arquivos_externos', False),
-                                        tempo_maximo_de_vida=rpa_config.get('tempo_maximo_de_vida', 600)
+                                # Verificar quantos jobs ativos já existem para este RPA
+                                nome_rpa_lower = nome_do_rpa.lower()
+                                jobs_ativos = jobs_ativos_por_rpa.get(nome_rpa_lower, 0)
+                                qtd_max_instancias = rpa_config.get('qtd_max_instancias', 1)
+                                
+                                # Só criar novo job se não atingiu o limite
+                                if jobs_ativos < qtd_max_instancias:
+                                    logger.info(
+                                        f"RPA {nome_do_rpa}: {len(execs_do_rpa)} execuções pendentes, "
+                                        f"{jobs_ativos}/{qtd_max_instancias} jobs ativos. Criando novo job..."
                                     )
-                                except Exception as e:
-                                    logger.error(f"Erro ao criar job para {nome_do_rpa}: {e}")
+                                    try:
+                                        self.k8s_service.create_job(
+                                            nome_rpa=nome_do_rpa,
+                                            docker_tag=rpa_config.get('docker_tag', 'latest'),
+                                            qtd_ram_maxima=rpa_config.get('qtd_ram_maxima', 256),
+                                            qtd_max_instancias=qtd_max_instancias,
+                                            utiliza_arquivos_externos=rpa_config.get('utiliza_arquivos_externos', False),
+                                            tempo_maximo_de_vida=rpa_config.get('tempo_maximo_de_vida', 600)
+                                        )
+                                    except Exception as e:
+                                        logger.error(f"Erro ao criar job para {nome_do_rpa}: {e}")
+                                else:
+                                    logger.debug(
+                                        f"RPA {nome_do_rpa}: Limite de instâncias atingido "
+                                        f"({jobs_ativos}/{qtd_max_instancias})"
+                                    )
                 
                 # Cronjobs e Deployments agora são gerenciados diretamente via API
                 # Não precisamos mais verificar arquivos YAML aqui

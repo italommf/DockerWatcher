@@ -3,7 +3,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from backend.services.cache_service import CacheKeys, CacheService
 from backend.services.service_manager import get_kubernetes_service
-from api.serializers.models import CronjobSerializer, CreateCronjobSerializer
+from api.serializers.models import CronjobSerializer, CreateCronjobSerializer, UpdateCronjobSerializer
 import yaml
 import logging
 import re
@@ -131,8 +131,26 @@ class CronjobViewSet(viewsets.ViewSet):
         nome = dados['name']
         schedule = dados['schedule']
         timezone = dados.get('timezone', 'America/Sao_Paulo')
-        nome_robo = dados['nome_robo']
-        docker_image = dados['docker_image']
+        nome_robo = dados.get('nome_robo', '').strip()  # Pode ser vazio
+        
+        # Construir docker_image a partir de repository e tag (ou usar o campo completo se fornecido)
+        docker_repository = dados.get('docker_repository')
+        docker_tag = dados.get('docker_tag')
+        docker_image = dados.get('docker_image')
+        
+        if docker_repository and docker_tag:
+            # Se ambos foram fornecidos, construir a imagem completa
+            docker_image = f"{docker_repository}:{docker_tag}"
+        elif docker_repository and not docker_tag:
+            # Se só o repositório foi fornecido, usar :latest como padrão
+            docker_image = f"{docker_repository}:latest"
+        elif not docker_image:
+            # Se nenhum foi fornecido, retornar erro
+            return Response(
+                {'error': 'É necessário fornecer docker_repository e docker_tag ou docker_image completo'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
         memory_limit = dados.get('memory_limit', '256Mi')
         ttl_seconds = dados.get('ttl_seconds_after_finished', 60)
         
@@ -154,6 +172,14 @@ class CronjobViewSet(viewsets.ViewSet):
         
         try:
             # Montar YAML do Cronjob
+            # Construir seção de env apenas se nome_robo não estiver vazio
+            env_section = ""
+            if nome_robo:
+                env_section = f"""
+              env:
+                - name: NOME_ROBO
+                  value: "{nome_robo}" """
+            
             yaml_content = f"""apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -171,10 +197,7 @@ spec:
           containers:
             - name: rpa
               image: {docker_image}
-              imagePullPolicy: Always
-              env:
-                - name: NOME_ROBO
-                  value: "{nome_robo}"
+              imagePullPolicy: Always{env_section}
               resources:
                 limits:
                   memory: "{memory_limit}"
@@ -210,6 +233,127 @@ spec:
         except Exception as e:
             logger.error(f"Erro ao criar cronjob: {e}")
             return Response({'error': f'Erro ao criar cronjob: {str(e)}'}, 
+                          status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    def update(self, request, pk=None):
+        """Atualiza um cronjob existente (deleta e recria com novos parâmetros)."""
+        serializer = UpdateCronjobSerializer(data=request.data)
+        
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            # Buscar cronjob existente para obter configurações atuais
+            k8s_cronjobs = CacheService.get_data(CacheKeys.CRONJOBS, []) or []
+            if not k8s_cronjobs:
+                k8s_cronjobs = self.k8s_service.get_cronjobs()
+                CacheService.update(CacheKeys.CRONJOBS, k8s_cronjobs)
+            
+            existing_cronjob = next((c for c in k8s_cronjobs if c['name'] == pk), None)
+            if not existing_cronjob:
+                return Response(
+                    {'error': f'Cronjob "{pk}" não encontrado'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Obter dados atualizados do serializer
+            dados = serializer.validated_data
+            
+            # Usar valores atuais como padrão se não fornecidos
+            schedule = dados.get('schedule', existing_cronjob.get('schedule', '0 0 * * *'))
+            timezone = dados.get('timezone', 'America/Sao_Paulo')
+            nome_robo = dados.get('nome_robo', '').strip() if 'nome_robo' in dados else ''
+            
+            # Construir docker_image
+            docker_repository = dados.get('docker_repository')
+            docker_tag = dados.get('docker_tag')
+            docker_image = dados.get('docker_image')
+            
+            if docker_repository and docker_tag:
+                docker_image = f"{docker_repository}:{docker_tag}"
+            elif docker_repository and not docker_tag:
+                docker_image = f"{docker_repository}:latest"
+            elif not docker_image:
+                # Tentar extrair da configuração existente
+                existing_image = existing_cronjob.get('image', '')
+                if existing_image:
+                    docker_image = existing_image
+                else:
+                    return Response(
+                        {'error': 'É necessário fornecer docker_repository e docker_tag ou docker_image completo'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+            
+            memory_limit = dados.get('memory_limit', '256Mi')
+            ttl_seconds = dados.get('ttl_seconds_after_finished', 60)
+            
+            # Deletar cronjob existente
+            delete_success = self.k8s_service.delete_cronjob(pk)
+            if not delete_success:
+                return Response(
+                    {'error': 'Erro ao deletar cronjob existente para atualização'},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+            
+            # Aguardar um momento para garantir que o cronjob foi deletado
+            import time
+            time.sleep(1)
+            
+            # Criar novo cronjob com configurações atualizadas
+            env_section = ""
+            if nome_robo:
+                env_section = f"""
+              env:
+                - name: NOME_ROBO
+                  value: "{nome_robo}" """
+            
+            yaml_content = f"""apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {pk}
+spec:
+  schedule: "{schedule}"
+  timeZone: "{timezone}"
+  jobTemplate:
+    spec:
+      ttlSecondsAfterFinished: {ttl_seconds}
+      template:
+        spec:
+          imagePullSecrets:
+            - name: docker-hub-secret
+          containers:
+            - name: rpa
+              image: {docker_image}
+              imagePullPolicy: Always{env_section}
+              resources:
+                limits:
+                  memory: "{memory_limit}"
+          restartPolicy: Never
+"""
+            
+            cronjob_dict = yaml.safe_load(yaml_content)
+            yaml_formatted = yaml.dump(cronjob_dict, default_flow_style=False)
+            
+            # Recriar cronjob
+            cmd = f"kubectl create -f - <<EOF\n{yaml_formatted}\nEOF"
+            return_code, stdout, stderr = self.k8s_service.ssh_service.execute_command(cmd, timeout=30)
+            
+            if return_code != 0:
+                logger.error(f"Erro ao recriar cronjob: {stderr}")
+                return Response(
+                    {'error': f'Erro ao recriar cronjob no Kubernetes: {stderr}'}, 
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+            
+            # Invalidar cache de cronjobs
+            CacheService.update(CacheKeys.CRONJOBS, None)
+            CacheService.update(CacheKeys.CRONJOBS_PROCESSED, None)
+            
+            return Response({'message': 'Cronjob atualizado com sucesso'}, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            logger.error(f"Erro ao atualizar cronjob: {e}")
+            return Response({'error': f'Erro ao atualizar cronjob: {str(e)}'}, 
                           status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
     def destroy(self, request, pk=None):

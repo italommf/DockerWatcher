@@ -143,17 +143,13 @@ class JobViewSet(viewsets.ViewSet):
                 
                 nome_robo = normalized_name
             
-            # 3. Formatar para exibição limpa (Title Case)
-            if nome_robo and nome_robo != 'unknown':
-                # Substituir separadores por espaços
-                display_name = nome_robo.replace('-', ' ').replace('_', ' ')
-                # Capitalizar cada palavra
-                display_name = ' '.join(word.capitalize() for word in display_name.split())
-                
-                # Usar o nome limpo como chave para agrupar
-                nome_robo = display_name
+            # Se ainda não encontrou, marcar como unknown
+            if not nome_robo or nome_robo == 'unknown':
+                nome_robo = 'Unknown'
             else:
-                 nome_robo = 'Unknown'
+                # Manter o nome original (sem formatação) como chave
+                # A formatação/apelido será adicionado depois
+                nome_robo = nome_robo.lower()  # Apenas lowercase, sem formatação
             
             
             # Obter status do job
@@ -164,10 +160,6 @@ class JobViewSet(viewsets.ViewSet):
             # Log de debug para identificação
             if active > 0 or failed > 0:
                  logger.info(f"[{request_id}] Job '{job_name}' -> RPA: '{nome_robo}'")
-            
-            # Normalizar para minúsculas para comparação consistente
-            # REMOVIDO: Agora usamos Title Case para exibição bonita
-            # nome_robo = nome_robo.lower()
             
             # Determinar o tipo baseado no nome original do job
             tipo = 'RPA'  # Padrão
@@ -201,23 +193,96 @@ class JobViewSet(viewsets.ViewSet):
             if completions > 0:
                 status_by_rpa[nome_robo]['succeeded'] += completions
         
-        # Buscar pods APENAS se necessário e de forma otimizada
-        # Os dados dos jobs já fornecem a maioria das informações (running, failed, succeeded)
-        # Pods são buscados apenas para detectar pending/error que podem não estar nos jobs
-        # Otimização: pular busca de pods se não houver necessidade (dados dos jobs são suficientes)
+        # Buscar PODS de deployments (não aparecem como jobs)
         try:
-            # Buscar pods apenas se houver necessidade (ex: para detectar pending)
-            # Por enquanto, vamos pular a busca de pods para melhorar performance
-            # Os dados dos jobs já fornecem running, failed e succeeded
-            logger.debug(f"[{request_id}] Pulando busca de pods (otimização)")
-            # Pods pendentes/erro são menos críticos e podem ser obtidos depois se necessário
-            pass  # Pular busca de pods por enquanto para melhorar performance
+            pods = CacheService.get_data(CacheKeys.PODS, []) or []
+            if not pods:
+                pods = self.k8s_service.get_pods()
+                CacheService.update(CacheKeys.PODS, pods)
+            
+            logger.debug(f"[{request_id}] Processando {len(pods)} pods para detectar deployments")
+            
+            # Processar pods que não estão associados a jobs (deployments)
+            for pod in pods:
+                if not pod or not isinstance(pod, dict):
+                    continue
+                
+                pod_name = pod.get('name', '')
+                labels = pod.get('labels', {})
+                phase = pod.get('phase', '')
+                
+                # Ignorar pods que fazem parte de jobs (já contabilizados)
+                if labels.get('job-name') or labels.get('controller-uid'):
+                    continue
+                
+                # Apenas pods Running ou Pending
+                if phase not in ['Running', 'Pending']:
+                    continue
+                
+                # Extrair nome do robô do pod
+                nome_robo = (labels.get('nome_robo') or 
+                            labels.get('nome-robo') or 
+                            labels.get('app') or
+                            None)
+                
+                # Se não encontrou, tentar extrair do nome do pod
+                if not nome_robo and pod_name:
+                    normalized_name = pod_name.lower()
+                    
+                    # Remover prefixos
+                    for prefix in ['rpa-deployment-', 'deployment-', 'rpa-']:
+                        if normalized_name.startswith(prefix):
+                            normalized_name = normalized_name[len(prefix):]
+                            break
+                    
+                    # Remover sufixos de hash do pod (ex: -abc123-xyz45)
+                    normalized_name = re.sub(r'-[a-z0-9]{4,10}-[a-z0-9]{4,10}$', '', normalized_name)
+                    normalized_name = re.sub(r'-[a-z0-9]{5,}$', '', normalized_name)
+                    
+                    nome_robo = normalized_name
+                
+                if not nome_robo or nome_robo == 'unknown':
+                    continue
+                
+                nome_robo = nome_robo.lower()
+                
+                # Adicionar ou atualizar status
+                if nome_robo not in status_by_rpa:
+                    status_by_rpa[nome_robo] = {
+                        'running': 0,
+                        'pending': 0,
+                        'error': 0,
+                        'failed': 0,
+                        'succeeded': 0,
+                        'tipo': 'Deploy'  # Assumir Deploy para pods sem job
+                    }
+                
+                # Contabilizar pod
+                if phase == 'Running':
+                    status_by_rpa[nome_robo]['running'] += 1
+                    logger.debug(f"[{request_id}] Pod deployment '{pod_name}' -> '{nome_robo}' (Running)")
+                elif phase == 'Pending':
+                    status_by_rpa[nome_robo]['pending'] += 1
+                    
         except Exception as e:
-            logger.warning(f"Erro ao buscar pods (continuando sem informações de pods): {e}")
-            # Continuar mesmo se falhar ao buscar pods - os dados dos jobs já são suficientes
+            logger.warning(f"[{request_id}] Erro ao buscar pods (continuando sem informações de  pods de deployment): {e}")
         
         # Buscar execuções pendentes do banco MySQL para todos os jobs identificados
         execucoes_por_robo = CacheService.get_data(CacheKeys.EXECUTIONS, {}) or {}
+        
+        # Buscar apelidos do banco de dados
+        from api.models import RoboDockerizado
+        robos_db = RoboDockerizado.objects.filter(ativo=True).values('nome', 'apelido', 'tipo')
+        
+        # Criar mapa de apelidos: {nome_normalizado: (apelido, tipo)}
+        apelidos_map = {}
+        for robo in robos_db:
+            nome_norm = robo['nome'].replace(' ', '').replace('-', '').replace('_', '').lower()
+            apelido = robo['apelido'] or robo['nome']  # Usar apelido se existe, senão nome
+            apelidos_map[nome_norm] = (apelido, robo['tipo'])
+            logger.debug(f"[{request_id}] Mapeamento: '{robo['nome']}' (norm: '{nome_norm}') -> apelido: '{apelido}'")
+        
+        logger.info(f"[{request_id}] {len(apelidos_map)} robôs cadastrados no banco, {len(status_by_rpa)} detectados rodando")
         
         # Set de nomes normalizados já processados (para evitar duplicatas)
         processed_normalized_names = set()
@@ -225,17 +290,36 @@ class JobViewSet(viewsets.ViewSet):
             if nome != 'Unknown':
                 processed_normalized_names.add(nome.replace(' ', '').replace('-', '').replace('_', '').lower())
 
-        # 1. Atualizar execuções para jobs já identificados
-        for nome_robo in status_by_rpa.keys():
+        # 1. Atualizar execuções e apelidos para jobs já identificados
+        for nome_robo in list(status_by_rpa.keys()):  # Usar list() para permitir modificação do dict durante iteração
             if nome_robo == 'Unknown':
                 status_by_rpa[nome_robo]['execucoes_pendentes'] = 0
+                status_by_rpa[nome_robo]['apelido'] = 'Unknown'
                 continue
+            
+            # Buscar apelido do banco
+            nome_robo_norm = nome_robo.replace(' ', '').replace('-', '').replace('_', '').lower()
+            apelido_info = apelidos_map.get(nome_robo_norm)
+            
+            if apelido_info:
+                apelido, tipo_db = apelido_info
+                status_by_rpa[nome_robo]['apelido'] = apelido
+                logger.debug(f"[{request_id}] Apelido encontrado para '{nome_robo}': '{apelido}'")
+                # Atualizar tipo se veio do banco (mais confiável)
+                if tipo_db:
+                    tipo_mapping = {'rpa': 'RPA', 'cronjob': 'Cronjob', 'deployment': 'Deploy'}
+                    status_by_rpa[nome_robo]['tipo'] = tipo_mapping.get(tipo_db, status_by_rpa[nome_robo].get('tipo', 'RPA'))
+            else:
+                # Se não encontrou no banco, usar o nome formatado como apelido
+                nome_formatado = nome_robo.replace('-', ' ').replace('_', ' ')
+                nome_formatado = ' '.join(word.capitalize() for word in nome_formatado.split())
+                status_by_rpa[nome_robo]['apelido'] = nome_formatado
+                logger.warning(f"[{request_id}] Robô '{nome_robo}' não encontrado no banco (nome_norm: '{nome_robo_norm}'), usando nome formatado: '{nome_formatado}'")
             
             # Tentar encontrar correspondência exata ou normalizada
             execucoes = execucoes_por_robo.get(nome_robo, [])
             if not execucoes:
                 # Busca flexível
-                nome_robo_norm = nome_robo.replace(' ', '').replace('-', '').replace('_', '').lower()
                 for nome_db, execs in execucoes_por_robo.items():
                     nome_db_norm = nome_db.replace(' ', '').replace('-', '').replace('_', '').lower()
                     if nome_robo_norm == nome_db_norm:
@@ -251,10 +335,20 @@ class JobViewSet(viewsets.ViewSet):
                 
             nome_db_norm = nome_db.replace(' ', '').replace('-', '').replace('_', '').lower()
             if nome_db_norm not in processed_normalized_names:
-                # Adicionar entrada para este RPA
-                # Usar o nome do banco formatado como chave
-                display_name = nome_db.replace('-', ' ').replace('_', ' ')
-                display_name = ' '.join(word.capitalize() for word in display_name.split())
+                # Buscar apelido do banco
+                apelido_info = apelidos_map.get(nome_db_norm)
+                
+                if apelido_info:
+                    apelido, tipo_db = apelido_info
+                    display_name = nome_db  # Manter nome original como chave
+                    tipo_mapping = {'rpa': 'RPA', 'cronjob': 'Cronjob', 'deployment': 'Deploy'}
+                    tipo = tipo_mapping.get(tipo_db, 'RPA')
+                else:
+                    # Se não encontrou no banco, formatar nome
+                    display_name = nome_db.replace('-', ' ').replace('_', ' ')
+                    display_name = ' '.join(word.capitalize() for word in display_name.split())
+                    apelido = display_name
+                    tipo = 'RPA'
                 
                 status_by_rpa[display_name] = {
                     'running': 0,
@@ -262,8 +356,9 @@ class JobViewSet(viewsets.ViewSet):
                     'error': 0,
                     'failed': 0,
                     'succeeded': 0,
-                    'tipo': 'RPA', # Assumir RPA se vem da fila de execuções
-                    'execucoes_pendentes': len(execs)
+                    'tipo': tipo,
+                    'execucoes_pendentes': len(execs),
+                    'apelido': apelido
                 }
                 # Marcar como processado
                 processed_normalized_names.add(nome_db_norm)

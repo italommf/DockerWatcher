@@ -176,8 +176,8 @@ class PollingService:
         # 1. Coletar RPAs ativos do banco local
         rpas_ativos: Set[str] = set()
         try:
-            from api.models import RPA
-            rpas_ativos = set(RPA.objects.filter(status="active").values_list("nome_rpa", flat=True))
+            from api.models import RoboDockerizado
+            rpas_ativos = set(RoboDockerizado.objects.filter(tipo='rpa', status="active", ativo=True).values_list("nome", flat=True))
             nomes.update(rpas_ativos)
         except Exception as e:
             logger.debug(f"Não foi possível coletar RPAs do banco local: {e}")
@@ -234,10 +234,10 @@ class PollingService:
     def _processar_e_cachear_rpas(self):
         """Processa lista de RPAs do banco local e armazena no cache."""
         try:
-            from api.models import RPA
+            from api.models import RoboDockerizado
             
-            # Buscar RPAs do banco local (rápido - SQLite)
-            rpas_queryset = RPA.objects.all()
+            # Buscar RPAs do banco local
+            rpas_queryset = RoboDockerizado.objects.filter(tipo='rpa')
             
             # Buscar dados do cache
             execucoes_por_robo = CacheService.get_data(CacheKeys.EXECUTIONS, {}) or {}
@@ -299,12 +299,12 @@ class PollingService:
     def _processar_e_cachear_cronjobs(self, k8s_cronjobs: List[Dict]):
         """Processa lista de cronjobs do Kubernetes e banco local, armazena no cache."""
         try:
-            from api.models import Cronjob
+            from api.models import RoboDockerizado
             import re
             
             # Buscar cronjobs do banco de dados
             try:
-                db_cronjobs = {cj.name: cj for cj in Cronjob.objects.all()}
+                db_cronjobs = {cj.nome: cj for cj in RoboDockerizado.objects.filter(tipo='cronjob')}
             except Exception as e:
                 logger.debug(f"Erro ao buscar cronjobs do banco: {e}")
                 db_cronjobs = {}
@@ -360,11 +360,11 @@ class PollingService:
     def _processar_e_cachear_deployments(self, k8s_deployments: List[Dict]):
         """Processa lista de deployments do Kubernetes e banco local, armazena no cache."""
         try:
-            from api.models import Deployment
+            from api.models import RoboDockerizado
             
             # Buscar deployments do banco de dados
             try:
-                db_deployments = {dep.name: dep for dep in Deployment.objects.all()}
+                db_deployments = {dep.nome: dep for dep in RoboDockerizado.objects.filter(tipo='deployment')}
             except Exception as e:
                 logger.debug(f"Erro ao buscar deployments do banco: {e}")
                 db_deployments = {}

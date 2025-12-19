@@ -43,19 +43,19 @@ export default function Falhas({ isConnected = true, onReconnect }) {
   // Função para extrair nome do robô do nome do pod
   const extrairNomeRoboDoPod = (podName) => {
     if (!podName) return 'Desconhecido'
-    
+
     let nomeExtraido = podName
-    
+
     // Remover prefixos: rpa-job- ou rpa-cronjob-
     nomeExtraido = nomeExtraido.replace(/^rpa-(job|cronjob)-/, '')
-    
+
     // Remover sufixos com IDs aleatórios do Kubernetes
     // Padrão 1: -{5chars}-{5chars} (ex: -27ppb-g2gpn) - padrão mais comum de IDs do Kubernetes
     nomeExtraido = nomeExtraido.replace(/-[a-z0-9]{5}-[a-z0-9]{5}$/i, '')
-    
+
     // Padrão 2: sufixos numéricos longos no final (ex: -29387700) - IDs de cronjobs
     nomeExtraido = nomeExtraido.replace(/-\d{6,}$/, '')
-    
+
     // Padrão 3: IDs muito curtos no final (1-3 caracteres) que são claramente IDs
     // Mas apenas se não for parte de um nome válido (verificar se há mais de 3 hífens antes)
     const partes = nomeExtraido.split('-')
@@ -67,7 +67,7 @@ export default function Falhas({ isConnected = true, onReconnect }) {
         nomeExtraido = partes.join('-')
       }
     }
-    
+
     return nomeExtraido || 'Desconhecido'
   }
 
@@ -80,49 +80,49 @@ export default function Falhas({ isConnected = true, onReconnect }) {
     formatado = formatado.split(' ')
       .map(palavra => palavra.charAt(0).toUpperCase() + palavra.slice(1).toLowerCase())
       .join(' ')
-    
+
     // Remover "RPA" e "CRONJOB"/"CONJOB" se forem as duas primeiras palavras
     const palavras = formatado.split(' ')
     if (palavras.length >= 2) {
       const primeira = palavras[0].toLowerCase()
       const segunda = palavras[1].toLowerCase()
-      
-      if ((primeira === 'rpa' && (segunda === 'cronjob' || segunda === 'conjob')) || 
-          ((primeira === 'cronjob' || primeira === 'conjob') && segunda === 'rpa')) {
+
+      if ((primeira === 'rpa' && (segunda === 'cronjob' || segunda === 'conjob')) ||
+        ((primeira === 'cronjob' || primeira === 'conjob') && segunda === 'rpa')) {
         // Remover as duas primeiras palavras
         palavras.splice(0, 2)
         formatado = palavras.join(' ').trim()
       }
     }
-    
+
     return formatado
   }
 
   // Agrupar pods por nome do robô
   const groupedPods = useMemo(() => {
     const grouped = {}
-    
+
     failedPods.forEach((pod) => {
       // Tentar obter o nome do robô de várias fontes possíveis
       let robotName = pod.nome_robo || pod.labels?.nome_robo || pod.labels?.['nome_robo']
-      
+
       // Se não encontrou, extrair do nome do pod
       if (!robotName && pod.name) {
         robotName = extrairNomeRoboDoPod(pod.name)
       }
-      
+
       // Se ainda não encontrou, usar 'Desconhecido'
       robotName = robotName || 'Desconhecido'
-      
+
       // Formatar o nome (capitalizar e substituir hífens por espaços)
       const robotNameFormatado = formatarNome(robotName)
-      
+
       if (!grouped[robotNameFormatado]) {
         grouped[robotNameFormatado] = []
       }
       grouped[robotNameFormatado].push(pod)
     })
-    
+
     // Ordenar pods dentro de cada grupo por data (mais recente primeiro)
     Object.keys(grouped).forEach((robotName) => {
       grouped[robotName].sort((a, b) => {
@@ -131,7 +131,7 @@ export default function Falhas({ isConnected = true, onReconnect }) {
         return dateB - dateA
       })
     })
-    
+
     return grouped
   }, [failedPods])
 
@@ -147,7 +147,7 @@ export default function Falhas({ isConnected = true, onReconnect }) {
       loadFailedPods()
       const interval = setInterval(() => {
         if (isConnected) loadFailedPods()
-      }, 15000) // Atualizar a cada 15s
+      }, 10000) // Atualizar a cada 10s (sincronizado com o backend)
       return () => clearInterval(interval)
     } else {
       setLoading(false)
@@ -156,12 +156,12 @@ export default function Falhas({ isConnected = true, onReconnect }) {
 
   const loadFailedPods = async () => {
     if (!isConnected) return // Não tentar carregar se desconectado
-    
+
     try {
       setLoading(true)
       // Buscar pods com falhas do banco de dados
       const failed = await api.getFailedPods()
-      
+
       setFailedPods(Array.isArray(failed) ? failed : [])
     } catch (error) {
       console.error('Erro ao carregar pods falhados:', error)
@@ -238,248 +238,295 @@ export default function Falhas({ isConnected = true, onReconnect }) {
   }
 
   return (
-    <Box>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
-        <Typography
-          variant="h4"
-          gutterBottom
-          sx={{
-            fontWeight: 'bold',
-            color: '#F8FAFC',
-            textShadow: '0 2px 8px rgba(0, 0, 0, 0.3)',
-          }}
-        >
-          Falhas em Containers
-        </Typography>
-        <Box sx={{ display: 'flex', gap: 2 }}>
-          {!isConnected && onReconnect && (
-            <Button variant="outlined" onClick={onReconnect}>
-              Reconectar
-            </Button>
-          )}
-          <Button
-            variant="outlined"
-            startIcon={<RefreshIcon />}
-            onClick={loadFailedPods}
-            disabled={loading || !isConnected}
-          >
-            Atualizar
-          </Button>
-        </Box>
-      </Box>
-
-      {!isConnected && failedPods.length > 0 && (
-        <Alert severity="warning" sx={{ mb: 3 }}>
-          Você está desconectado. Os dados exibidos são do cache. Reconecte para atualizar.
-        </Alert>
-      )}
-
-      {loading && failedPods.length === 0 ? (
-        <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '400px' }}>
-          <CircularProgress />
-        </Box>
-      ) : failedPods.length === 0 ? (
-        <Card>
-          <CardContent>
-            <Typography variant="h6" sx={{ color: '#CBD5E1', textAlign: 'center' }}>
-              Nenhum container com falha encontrado.
-            </Typography>
-          </CardContent>
-        </Card>
-      ) : Object.keys(groupedPods).length === 0 ? (
-        <Card>
-          <CardContent>
-            <Typography variant="h6" sx={{ color: '#CBD5E1', textAlign: 'center' }}>
-              Nenhum container com falha encontrado.
-            </Typography>
-          </CardContent>
-        </Card>
-      ) : (
-        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-          {Object.keys(groupedPods).map((robotName) => {
-            const pods = groupedPods[robotName]
-            const isExpanded = expandedRobots[robotName] || false
-            
-            return (
-              <Accordion
-                key={robotName}
-                expanded={isExpanded}
-                onChange={() => handleExpandRobot(robotName)}
-                sx={{
-                  backgroundColor: 'rgba(30, 41, 59, 0.3)',
-                  backdropFilter: 'blur(20px)',
-                  border: '1px solid rgba(255, 255, 255, 0.1)',
-                  boxShadow: '0 8px 32px 0 rgba(0, 0, 0, 0.1)',
-                  '&:before': {
-                    display: 'none',
-                  },
-                }}
-              >
-                <AccordionSummary
-                  expandIcon={<ExpandMoreIcon sx={{ color: '#F8FAFC' }} />}
-                  sx={{
-                    '& .MuiAccordionSummary-content': {
-                      alignItems: 'center',
-                    },
-                  }}
-                >
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, width: '100%' }}>
-                    <Typography
-                      variant="h6"
-                      sx={{
-                        color: '#F8FAFC',
-                        fontWeight: 'bold',
-                        flex: 1,
-                      }}
-                    >
-                      {robotName}
-                    </Typography>
-                    <Chip
-                      label={`${pods.length} pod${pods.length !== 1 ? 's' : ''} falhado${pods.length !== 1 ? 's' : ''}`}
-                      color="error"
-                      size="small"
-                      sx={{ ml: 'auto' }}
-                    />
-                  </Box>
-                </AccordionSummary>
-                <AccordionDetails sx={{ p: 0 }}>
-                  <TableContainer
-                    component={Paper}
-                    sx={{
-                      backgroundColor: 'transparent',
-                      boxShadow: 'none',
-                    }}
-                  >
-                    <Table>
-                      <TableHead>
-                        <TableRow>
-                          <TableCell sx={{ color: '#F8FAFC', fontWeight: 'bold' }}>Nome do Pod</TableCell>
-                          <TableCell sx={{ color: '#F8FAFC', fontWeight: 'bold' }}>Namespace</TableCell>
-                          <TableCell sx={{ color: '#F8FAFC', fontWeight: 'bold' }}>Status</TableCell>
-                          <TableCell sx={{ color: '#F8FAFC', fontWeight: 'bold' }}>Início</TableCell>
-                          <TableCell sx={{ color: '#F8FAFC', fontWeight: 'bold' }}>Ações</TableCell>
-                        </TableRow>
-                      </TableHead>
-                      <TableBody>
-                        {pods.map((pod) => (
-                          <TableRow
-                            key={pod.name}
-                            sx={{ '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.05)' } }}
-                          >
-                            <TableCell sx={{ color: '#F8FAFC' }}>{pod.name}</TableCell>
-                            <TableCell sx={{ color: '#CBD5E1' }}>{pod.namespace || 'default'}</TableCell>
-                            <TableCell>
-                              <Chip
-                                label={getStatusLabel(pod.status, pod.phase)}
-                                color={getStatusColor(pod.status, pod.phase)}
-                                size="small"
-                              />
-                            </TableCell>
-                            <TableCell sx={{ color: '#CBD5E1' }}>
-                              {formatDate(pod.start_time)}
-                            </TableCell>
-                            <TableCell>
-                              <IconButton
-                                size="small"
-                                onClick={() => handleViewLogs(pod)}
-                                sx={{ color: '#6366F1' }}
-                                title="Ver logs"
-                              >
-                                <VisibilityIcon />
-                              </IconButton>
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </TableContainer>
-                </AccordionDetails>
-              </Accordion>
-            )
-          })}
-        </Box>
-      )}
-
-      {/* Dialog de Logs */}
-      <Dialog
-        open={dialogOpen}
-        onClose={handleCloseDialog}
-        maxWidth="md"
-        fullWidth
-        PaperProps={{
-          sx: {
-            backgroundColor: 'rgba(30, 41, 59, 0.95)',
-            backdropFilter: 'blur(20px)',
-            border: '1px solid rgba(255, 255, 255, 0.1)',
+    <Box sx={{ display: 'flex', height: 'calc(100vh - 10px)', width: '100%', gap: 1, overflow: 'hidden', p: 0 }}>
+      {/* Paper wrapper com o estilo "Orange Gradient" do Dashboard (Default Panel) */}
+      <Paper
+        elevation={0}
+        sx={{
+          flex: 1,
+          transition: 'all 0.5s cubic-bezier(0.4, 0, 0.2, 1)',
+          position: 'relative',
+          overflow: 'hidden',
+          bgcolor: '#FFFFFF',
+          '&::before': {
+            content: '""',
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            // Gradiente Laranja do Dashboard
+            background: 'linear-gradient(135deg, #ee4756 0%, #f7a54c 50%, #fcd335 100%)',
+            opacity: 0.75,
+            zIndex: 0,
           },
+          borderRadius: '16px',
+          border: '1px solid rgba(247, 165, 76, 0.3)',
+          boxShadow: '0 8px 32px rgba(247, 165, 76, 0.15)',
         }}
       >
-        <DialogTitle sx={{ color: '#F8FAFC', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <Typography variant="h6">
-            Logs: {selectedPod?.name}
-          </Typography>
-          <IconButton onClick={handleCloseDialog} sx={{ color: '#CBD5E1' }}>
-            <CloseIcon />
-          </IconButton>
-        </DialogTitle>
-        <DialogContent>
-          <Box sx={{ mb: 2, display: 'flex', gap: 2, alignItems: 'center' }}>
-            <TextField
-              label="Últimas linhas"
-              type="number"
-              value={tail}
-              onChange={(e) => setTail(parseInt(e.target.value) || 100)}
-              size="small"
-              sx={{ width: 150 }}
-              inputProps={{ min: 10, max: 1000 }}
-            />
-            <Button
-              variant="outlined"
-              startIcon={<RefreshIcon />}
-              onClick={handleRefreshLogs}
-              disabled={logsLoading}
-            >
-              Atualizar Logs
-            </Button>
-          </Box>
-          {logsLoading ? (
-            <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
-              <CircularProgress />
-            </Box>
-          ) : (
-            <Box
+        <Box sx={{
+          height: '100%',
+          overflowY: 'auto',
+          p: 3,
+          position: 'relative',
+          zIndex: 1, // Acima do gradiente
+        }}>
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+            <Typography
+              variant="h4"
+              gutterBottom
               sx={{
-                backgroundColor: '#0F172A',
-                border: '1px solid rgba(255, 255, 255, 0.1)',
-                borderRadius: 1,
-                p: 2,
-                maxHeight: '60vh',
-                overflow: 'auto',
+                fontWeight: 'bold',
+                color: '#FFFFFF',
+                textShadow: '0 2px 8px rgba(0, 0, 0, 0.3)',
               }}
             >
-              <Typography
-                component="pre"
-                sx={{
-                  color: '#CBD5E1',
-                  fontFamily: 'monospace',
-                  fontSize: '0.875rem',
-                  whiteSpace: 'pre-wrap',
-                  wordBreak: 'break-word',
-                  margin: 0,
-                }}
+              Falhas em Containers
+            </Typography>
+            <Box sx={{ display: 'flex', gap: 2 }}>
+              {!isConnected && onReconnect && (
+                <Button variant="outlined" onClick={onReconnect} sx={{ color: '#fff', borderColor: '#fff' }}>
+                  Reconectar
+                </Button>
+              )}
+              <Button
+                variant="outlined"
+                startIcon={<RefreshIcon />}
+                onClick={loadFailedPods}
+                disabled={loading || !isConnected}
+                sx={{ color: '#fff', borderColor: '#fff', '&:hover': { bgcolor: 'rgba(255,255,255,0.1)' } }}
               >
-                {logs || 'Carregando logs...'}
-              </Typography>
+                Atualizar
+              </Button>
+            </Box>
+          </Box>
+
+          {!isConnected && failedPods.length > 0 && (
+            <Alert severity="warning" sx={{ mb: 3 }}>
+              Você está desconectado. Os dados exibidos são do cache. Reconecte para atualizar.
+            </Alert>
+          )}
+
+          {loading && failedPods.length === 0 ? (
+            <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '400px' }}>
+              <CircularProgress sx={{ color: '#fff' }} />
+            </Box>
+          ) : failedPods.length === 0 ? (
+            <Card sx={{ bgcolor: 'rgba(30, 41, 59, 0.5)', borderRadius: 2 }}>
+              <CardContent>
+                <Typography variant="h6" sx={{ color: '#F8FAFC', textAlign: 'center' }}>
+                  Nenhum container com falha encontrado.
+                </Typography>
+              </CardContent>
+            </Card>
+          ) : Object.keys(groupedPods).length === 0 ? (
+            <Card sx={{ bgcolor: 'rgba(30, 41, 59, 0.5)', borderRadius: 2 }}>
+              <CardContent>
+                <Typography variant="h6" sx={{ color: '#F8FAFC', textAlign: 'center' }}>
+                  Nenhum container com falha encontrado.
+                </Typography>
+              </CardContent>
+            </Card>
+          ) : (
+            <Box sx={{ display: 'flex', flexDirection: 'column' }}>
+              {Object.keys(groupedPods).map((robotName, index, array) => {
+                const pods = groupedPods[robotName]
+                const isExpanded = expandedRobots[robotName] || false
+                const isLast = index === array.length - 1
+                const isFirst = index === 0
+
+                return (
+                  <Accordion
+                    key={robotName}
+                    expanded={isExpanded}
+                    onChange={() => handleExpandRobot(robotName)}
+                    disableGutters
+                    elevation={0}
+                    sx={{
+                      backgroundColor: 'rgba(30, 41, 59, 0.5)',
+                      backdropFilter: 'blur(20px)',
+                      borderLeft: '1px solid rgba(255, 255, 255, 0.1)',
+                      borderRight: '1px solid rgba(255, 255, 255, 0.1)',
+                      borderTop: '1px solid rgba(255, 255, 255, 0.1)',
+                      borderBottom: isLast ? '1px solid rgba(255, 255, 255, 0.1)' : 'none',
+                      boxShadow: 'none',
+                      '&:before': {
+                        display: 'none',
+                      },
+                      color: '#fff',
+                      borderTopLeftRadius: isFirst ? 16 : 0,
+                      borderTopRightRadius: isFirst ? 16 : 0,
+                      borderBottomLeftRadius: isLast ? 16 : 0,
+                      borderBottomRightRadius: isLast ? 16 : 0,
+                    }}
+                  >
+                    <AccordionSummary
+                      expandIcon={<ExpandMoreIcon sx={{ color: '#F8FAFC' }} />}
+                      sx={{
+                        '& .MuiAccordionSummary-content': {
+                          alignItems: 'center',
+                        },
+                      }}
+                    >
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, width: '100%' }}>
+                        <Typography
+                          variant="h6"
+                          sx={{
+                            color: '#F8FAFC',
+                            fontWeight: 'bold',
+                            flex: 1,
+                          }}
+                        >
+                          {robotName}
+                        </Typography>
+                        <Chip
+                          label={`${pods.length} pod${pods.length !== 1 ? 's' : ''} falhado${pods.length !== 1 ? 's' : ''}`}
+                          color="error"
+                          size="small"
+                          sx={{ ml: 'auto' }}
+                        />
+                      </Box>
+                    </AccordionSummary>
+                    <AccordionDetails sx={{ p: 0 }}>
+                      <TableContainer
+                        component={Paper}
+                        sx={{
+                          backgroundColor: 'transparent',
+                          boxShadow: 'none',
+                        }}
+                      >
+                        <Table>
+                          <TableHead>
+                            <TableRow>
+                              <TableCell sx={{ color: '#F8FAFC', fontWeight: 'bold' }}>Nome do Pod</TableCell>
+                              <TableCell sx={{ color: '#F8FAFC', fontWeight: 'bold' }}>Namespace</TableCell>
+                              <TableCell sx={{ color: '#F8FAFC', fontWeight: 'bold' }}>Status</TableCell>
+                              <TableCell sx={{ color: '#F8FAFC', fontWeight: 'bold' }}>Início</TableCell>
+                              <TableCell sx={{ color: '#F8FAFC', fontWeight: 'bold' }}>Ações</TableCell>
+                            </TableRow>
+                          </TableHead>
+                          <TableBody>
+                            {pods.map((pod) => (
+                              <TableRow
+                                key={pod.name}
+                                sx={{ '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.05)' } }}
+                              >
+                                <TableCell sx={{ color: '#F8FAFC' }}>{pod.name}</TableCell>
+                                <TableCell sx={{ color: '#CBD5E1' }}>{pod.namespace || 'default'}</TableCell>
+                                <TableCell>
+                                  <Chip
+                                    label={getStatusLabel(pod.status, pod.phase)}
+                                    color={getStatusColor(pod.status, pod.phase)}
+                                    size="small"
+                                  />
+                                </TableCell>
+                                <TableCell sx={{ color: '#CBD5E1' }}>
+                                  {formatDate(pod.start_time)}
+                                </TableCell>
+                                <TableCell>
+                                  <IconButton
+                                    size="small"
+                                    onClick={() => handleViewLogs(pod)}
+                                    sx={{ color: '#6366F1' }}
+                                    title="Ver logs"
+                                  >
+                                    <VisibilityIcon />
+                                  </IconButton>
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </TableContainer>
+                    </AccordionDetails>
+                  </Accordion>
+                )
+              })}
             </Box>
           )}
-        </DialogContent>
-        <DialogActions sx={{ p: 2, borderTop: '1px solid rgba(255, 255, 255, 0.1)' }}>
-          <Button onClick={handleCloseDialog} sx={{ color: '#CBD5E1' }}>
-            Fechar
-          </Button>
-        </DialogActions>
-      </Dialog>
+
+          {/* Dialog de Logs */}
+          <Dialog
+            open={dialogOpen}
+            onClose={handleCloseDialog}
+            maxWidth="md"
+            fullWidth
+            PaperProps={{
+              sx: {
+                backgroundColor: 'rgba(30, 41, 59, 0.95)',
+                backdropFilter: 'blur(20px)',
+                border: '1px solid rgba(255, 255, 255, 0.1)',
+              },
+            }}
+          >
+            <DialogTitle sx={{ color: '#F8FAFC', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Typography variant="h6">
+                Logs: {selectedPod?.name}
+              </Typography>
+              <IconButton onClick={handleCloseDialog} sx={{ color: '#CBD5E1' }}>
+                <CloseIcon />
+              </IconButton>
+            </DialogTitle>
+            <DialogContent>
+              <Box sx={{ mb: 2, display: 'flex', gap: 2, alignItems: 'center' }}>
+                <TextField
+                  label="Últimas linhas"
+                  type="number"
+                  value={tail}
+                  onChange={(e) => setTail(parseInt(e.target.value) || 100)}
+                  size="small"
+                  sx={{ width: 150 }}
+                  inputProps={{ min: 10, max: 1000 }}
+                />
+                <Button
+                  variant="outlined"
+                  startIcon={<RefreshIcon />}
+                  onClick={handleRefreshLogs}
+                  disabled={logsLoading}
+                >
+                  Atualizar Logs
+                </Button>
+              </Box>
+              {logsLoading ? (
+                <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
+                  <CircularProgress />
+                </Box>
+              ) : (
+                <Box
+                  sx={{
+                    backgroundColor: '#0F172A',
+                    border: '1px solid rgba(255, 255, 255, 0.1)',
+                    borderRadius: 1,
+                    p: 2,
+                    maxHeight: '60vh',
+                    overflow: 'auto',
+                  }}
+                >
+                  <Typography
+                    component="pre"
+                    sx={{
+                      color: '#CBD5E1',
+                      fontFamily: 'monospace',
+                      fontSize: '0.875rem',
+                      whiteSpace: 'pre-wrap',
+                      wordBreak: 'break-word',
+                      margin: 0,
+                    }}
+                  >
+                    {logs || 'Carregando logs...'}
+                  </Typography>
+                </Box>
+              )}
+            </DialogContent>
+            <DialogActions sx={{ p: 2, borderTop: '1px solid rgba(255, 255, 255, 0.1)' }}>
+              <Button onClick={handleCloseDialog} sx={{ color: '#CBD5E1' }}>
+                Fechar
+              </Button>
+            </DialogActions>
+          </Dialog>
+        </Box>
+      </Paper>
     </Box>
   )
 }
-

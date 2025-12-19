@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useRef, useEffect } from 'react'
+import React, { createContext, useContext, useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import api from '../services/api'
 
 const DashboardCacheContext = createContext()
@@ -39,33 +39,34 @@ export const DashboardCacheProvider = ({ children }) => {
   const resourcesIntervalRef = useRef(null)
   const isInitializedRef = useRef(false)
   const dashboardLoadingRef = useRef(false) // Lock para evitar requisições duplicadas do dashboard
+  const lastDashboardLoadRef = useRef(0) // Timestamp da última requisição do dashboard
 
   // Função para calcular próxima execução (mesma do Dashboard)
   const calcularProximaExecucao = (schedule) => {
     if (!schedule) return null
-    
+
     try {
       const parts = schedule.trim().split(/\s+/)
       if (parts.length < 5) return null
-      
+
       const now = new Date()
       const [minuto, hora, dia, mes, diaSemana] = parts
-      
+
       let proxima = new Date(now)
       proxima.setSeconds(0)
       proxima.setMilliseconds(0)
-      
+
       if (minuto !== '*' && hora !== '*') {
         const minutoInt = parseInt(minuto) || 0
         const horaInt = parseInt(hora) || 0
-        
+
         proxima.setMinutes(minutoInt)
         proxima.setHours(horaInt)
-        
+
         if (proxima <= now) {
           proxima.setDate(proxima.getDate() + 1)
         }
-        
+
         if (dia !== '*') {
           const diaMes = parseInt(dia)
           if (!isNaN(diaMes)) {
@@ -86,14 +87,14 @@ export const DashboardCacheProvider = ({ children }) => {
             }
           }
         }
-        
+
         if (proxima <= now) {
           proxima.setDate(proxima.getDate() + 1)
         }
       } else {
         proxima = new Date(now.getTime() + 60 * 60 * 1000)
       }
-      
+
       return proxima
     } catch (e) {
       console.error('Erro ao calcular próxima execução:', e, schedule)
@@ -108,26 +109,34 @@ export const DashboardCacheProvider = ({ children }) => {
     formatado = formatado.split(' ')
       .map(palavra => palavra.charAt(0).toUpperCase() + palavra.slice(1).toLowerCase())
       .join(' ')
-    
+
     const palavras = formatado.split(' ')
     if (palavras.length >= 2) {
       const primeira = palavras[0].toLowerCase()
       const segunda = palavras[1].toLowerCase()
-      
-      if ((primeira === 'rpa' && (segunda === 'cronjob' || segunda === 'conjob')) || 
-          ((primeira === 'cronjob' || primeira === 'conjob') && segunda === 'rpa')) {
+
+      if ((primeira === 'rpa' && (segunda === 'cronjob' || segunda === 'conjob')) ||
+        ((primeira === 'cronjob' || primeira === 'conjob') && segunda === 'rpa')) {
         palavras.splice(0, 2)
         formatado = palavras.join(' ').trim()
       }
     }
-    
+
     return formatado
   }
 
   // Função para carregar dados do dashboard
   const loadDashboardData = async (isConnected) => {
     if (!isConnected) return
-    
+
+    // Throttle: não permitir requisições mais frequentes que 5 segundos
+    const now = Date.now()
+    const timeSinceLastLoad = now - lastDashboardLoadRef.current
+    if (timeSinceLastLoad < 5000) {
+      console.log(`[DASHBOARD] Throttle ativo - última requisição há ${timeSinceLastLoad}ms, ignorando`)
+      return
+    }
+
     // Evitar requisições duplicadas simultâneas
     if (dashboardLoadingRef.current) {
       console.log('[DASHBOARD] Requisição já em andamento, ignorando duplicata')
@@ -135,11 +144,12 @@ export const DashboardCacheProvider = ({ children }) => {
     }
 
     dashboardLoadingRef.current = true
+    lastDashboardLoadRef.current = now
     const requestId = `REQ-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
     console.log(`[${requestId}] Iniciando carregamento de dados do dashboard`)
-    
+
     const startTime = Date.now()
-    
+
     try {
       // Fazer requisições com tratamento de erro individual
       // Se uma falhar, as outras continuam funcionando
@@ -152,8 +162,8 @@ export const DashboardCacheProvider = ({ children }) => {
           console.warn(`[${requestId}] Erro ao carregar status de jobs:`, err.message || err)
           return {} // Retornar objeto vazio em caso de erro
         }),
-        api.getCronjobs().catch(err => {
-          console.warn(`[${requestId}] Erro ao carregar cronjobs:`, err.message || err)
+        api.getCronjobsFromKubernetes().catch(err => {
+          console.warn(`[${requestId}] Erro ao carregar cronjobs do Kubernetes:`, err.message || err)
           return [] // Retornar array vazio em caso de erro
         }),
         api.getDeployments().catch(err => {
@@ -161,7 +171,7 @@ export const DashboardCacheProvider = ({ children }) => {
           return [] // Retornar array vazio em caso de erro
         }),
       ])
-      
+
       const elapsed = Date.now() - startTime
       console.log(`[${requestId}] Carregamento concluído em ${elapsed}ms`)
 
@@ -170,12 +180,12 @@ export const DashboardCacheProvider = ({ children }) => {
       const jobsStatusData = jobsStatus.status === 'fulfilled' ? jobsStatus.value : {}
       const cronjobsDataResult = cronjobsData.status === 'fulfilled' ? cronjobsData.value : []
       const deploymentsData = deployments.status === 'fulfilled' ? deployments.value : []
-      
+
       // Processar cronjobs
       const cronjobsAtivos = Array.isArray(cronjobsDataResult)
         ? cronjobsDataResult.filter((cj) => !cj.suspended)
         : []
-      
+
       const cronjobsOrdenados = cronjobsAtivos
         .map(cj => ({
           ...cj,
@@ -196,6 +206,25 @@ export const DashboardCacheProvider = ({ children }) => {
       let rpasAtivos = 0
       const rpasRodando = new Set()
       const jobsContabilizados = new Set()
+
+      // NOVO: Calcular totais globais antecipadamente (Backend já traz tudo unificado)
+      const jobsStatusKeys = jobsStatusData && typeof jobsStatusData === 'object' ? Object.keys(jobsStatusData) : []
+      jobsStatusKeys.forEach(key => {
+        const s = jobsStatusData[key];
+        if (s && typeof s === 'object') {
+          instanciasAtivas += (s.running || 0);
+          falhasContainers += (s.error || 0) + (s.failed || 0);
+          execucoesPendentes += (s.execucoes_pendentes || 0);
+
+          if ((s.running || 0) > 0) {
+            const nomeNormalizado = key.toLowerCase().replace(/[-_\s]/g, '');
+            if (nomeNormalizado) {
+              rpasRodando.add(nomeNormalizado);
+              jobsContabilizados.add(nomeNormalizado);
+            }
+          }
+        }
+      });
       const robotsList = []
 
       const cronjobsMap = new Map()
@@ -236,44 +265,50 @@ export const DashboardCacheProvider = ({ children }) => {
       const nomesAdicionados = new Set()
 
       // Processar jobs rodando
-      const jobsStatusKeys = jobsStatusData && typeof jobsStatusData === 'object' ? Object.keys(jobsStatusData) : []
+
+      console.log('[DASHBOARD_DEBUG] Chaves de status recebidas:', jobsStatusKeys)
+
       jobsStatusKeys.forEach((nomeRpaKey) => {
         const status = jobsStatusData[nomeRpaKey]
         // Verificar se status existe e é um objeto válido
         if (!status || typeof status !== 'object') return
         // Verificar se running existe e é maior que 0
         const running = status.running
+        console.log(`[DASHBOARD_DEBUG] Processando RPA '${nomeRpaKey}': running=${running}`)
+
         if (!running || running <= 0) return
-        
-        const nomeComparacao = nomeRpaKey.toLowerCase().replace(/[-_]/g, '')
+
+        console.log(`[DASHBOARD_DEBUG] RPA: ${nomeRpaKey}, Status:`, status)
+
+        const nomeComparacao = nomeRpaKey.toLowerCase().replace(/[-_\s]/g, '')
         const rpaExistente = (Array.isArray(rpasData) ? rpasData : []).find(rpa => {
-          const nomeRpaComparacao = rpa.nome_rpa?.toLowerCase().replace(/[-_]/g, '')
-          return nomeRpaComparacao === nomeComparacao || 
-                 rpa.nome_rpa?.toLowerCase() === nomeRpaKey.toLowerCase()
+          const nomeRpaComparacao = rpa.nome_rpa?.toLowerCase().replace(/[-_\s]/g, '')
+          return nomeRpaComparacao === nomeComparacao ||
+            rpa.nome_rpa?.toLowerCase() === nomeRpaKey.toLowerCase()
         })
-        
+
         const jaAdicionado = Array.from(nomesAdicionados).some(nome => {
-          const nomeComp = nome.toLowerCase().replace(/[-_]/g, '')
+          const nomeComp = nome.toLowerCase().replace(/[-_\s]/g, '')
           return nomeComp === nomeComparacao
         })
-        
+
         if (!rpaExistente && !jaAdicionado) {
           // Garantir que status é válido antes de acessar propriedades
           if (!status || typeof status !== 'object') return
-          
+
           const tipo = (status.tipo) ? status.tipo : determinarTipo(nomeRpaKey)
           let execucoes = 0
           let dependenteDeExecucoes = true
 
           if (tipo === 'Cronjob') {
             const cronjobCorrespondente = cronjobsOrdenados?.find(cj => {
-              const nomeCjLower = cj.name?.toLowerCase()
-              const nomeRpaLower = nomeRpaKey.toLowerCase()
-              return nomeCjLower === nomeRpaLower || 
-                     nomeCjLower?.includes(nomeRpaLower) ||
-                     nomeRpaLower?.includes(nomeCjLower?.replace('rpa-cronjob-', '').replace('-cronjob', ''))
+              const nomeCjNorm = cj.name?.toLowerCase().replace(/[-_\s]/g, '')
+              const nomeRpaNorm = nomeRpaKey.toLowerCase().replace(/[-_\s]/g, '')
+              return nomeCjNorm === nomeRpaNorm ||
+                nomeCjNorm?.includes(nomeRpaNorm) ||
+                nomeRpaNorm?.includes(nomeCjNorm?.replace('rpacronjob', '').replace('cronjob', ''))
             })
-            
+
             if (cronjobCorrespondente) {
               dependenteDeExecucoes = cronjobCorrespondente.dependente_de_execucoes !== false
               if (dependenteDeExecucoes) {
@@ -284,13 +319,13 @@ export const DashboardCacheProvider = ({ children }) => {
             }
           } else if (tipo === 'Deploy') {
             const deploymentCorrespondente = deploymentsData?.find(dep => {
-              const nomeDepLower = dep.name?.toLowerCase()
-              const nomeRpaLower = nomeRpaKey.toLowerCase()
-              return nomeDepLower === nomeRpaLower || 
-                     nomeDepLower?.includes(nomeRpaLower) ||
-                     nomeRpaLower?.includes(nomeDepLower?.replace('deployment-', '').replace('-deployment', ''))
+              const nomeDepNorm = dep.name?.toLowerCase().replace(/[-_\s]/g, '')
+              const nomeRpaNorm = nomeRpaKey.toLowerCase().replace(/[-_\s]/g, '')
+              return nomeDepNorm === nomeRpaNorm ||
+                nomeDepNorm?.includes(nomeRpaNorm) ||
+                nomeRpaNorm?.includes(nomeDepNorm?.replace('deployment', '').replace('deployment', ''))
             })
-            
+
             if (deploymentCorrespondente) {
               dependenteDeExecucoes = deploymentCorrespondente.dependente_de_execucoes !== false
               if (dependenteDeExecucoes) {
@@ -302,28 +337,24 @@ export const DashboardCacheProvider = ({ children }) => {
           } else {
             execucoes = (status.execucoes_pendentes !== undefined && status.execucoes_pendentes !== null) ? status.execucoes_pendentes : 0
           }
-          
+
           nomesAdicionados.add(nomeRpaKey)
           const nomeNormalizado = nomeRpaKey.toLowerCase().replace(/[-_]/g, '')
           if (nomeNormalizado) {
             rpasRodando.add(nomeNormalizado)
             jobsContabilizados.add(nomeNormalizado)
           }
-          
+
           // Garantir que status é válido antes de acessar propriedades
           const runningValue = (status && typeof status === 'object' && status.running) ? status.running : 0
           const errorValue = (status && typeof status === 'object' && status.error) ? status.error : 0
           const failedValue = (status && typeof status === 'object' && status.failed) ? status.failed : 0
-          
-          instanciasAtivas += runningValue
-          falhasContainers += errorValue + failedValue
-          
-          if (dependenteDeExecucoes && execucoes > 0) {
-            execucoesPendentes += execucoes
-          }
-          
+
+          // Contagem de totais movida para início do arquivo
+
+
           robotsList.push({
-            nome: formatarNome(nomeRpaKey),
+            nome: status.apelido || formatarNome(nomeRpaKey),  // Usar apelido se disponível
             instancias: runningValue,
             status: 'Running',
             statusColor: 'success',
@@ -337,50 +368,52 @@ export const DashboardCacheProvider = ({ children }) => {
       if (Array.isArray(rpasData)) {
         rpasData.forEach((rpa) => {
           if (!rpa || typeof rpa !== 'object') return
-          
+
           const nomeRpaLower = rpa.nome_rpa?.toLowerCase()
           const status = (jobsStatusData && typeof jobsStatusData === 'object') ? (
-            jobsStatusData[nomeRpaLower] || 
-            jobsStatusData[rpa.nome_rpa] || 
+            jobsStatusData[nomeRpaLower] ||
+            jobsStatusData[rpa.nome_rpa] ||
             jobsStatusData[nomeRpaLower?.replace('_', '-')] ||
             jobsStatusData[nomeRpaLower?.replace('-', '_')] ||
             {}
           ) : {}
-          
+
           // Verificar se status é um objeto válido
           const statusValido = status && typeof status === 'object'
-          
-          const execucoesRpa = statusValido && status.execucoes_pendentes !== undefined 
-            ? status.execucoes_pendentes 
+
+          const execucoesRpa = statusValido && status.execucoes_pendentes !== undefined
+            ? status.execucoes_pendentes
             : (rpa.execucoes_pendentes || 0)
-          execucoesPendentes += execucoesRpa
-          
-          instanciasAtivas += statusValido ? (status.running || 0) : 0
-          falhasContainers += statusValido ? ((status.error || 0) + (status.failed || 0)) : 0
-          
+          // Contagem de totais movida para início do arquivo
+
+
           if (statusValido && status.running > 0) {
             const nomeNormalizado = nomeRpaLower?.replace(/[-_]/g, '') || rpa.nome_rpa?.toLowerCase().replace(/[-_]/g, '')
             if (nomeNormalizado) {
               rpasRodando.add(nomeNormalizado)
               jobsContabilizados.add(nomeNormalizado)
             }
-            
+
             // Adicionar à lista de robôs se ainda não foi adicionado
             const nomeOriginal = rpa.nome_rpa || ''
             const nomeComparacao = nomeOriginal.toLowerCase().replace(/[-_]/g, '')
-            
+
             const jaExiste = Array.from(nomesAdicionados).some(nome => {
               const nomeComp = nome.toLowerCase().replace(/[-_]/g, '')
               return nomeComp === nomeComparacao
             })
-            
+
             if (!jaExiste) {
               // Garantir que status é válido antes de acessar propriedades
               const tipo = (statusValido && status.tipo) ? status.tipo : 'RPA'
               const runningValue = (statusValido && status.running) ? status.running : 0
               nomesAdicionados.add(nomeOriginal)
+
+              // Usar apelido se disponível, senão usar do backend ou formatar nome
+              const displayName = rpa.apelido || (statusValido && status.apelido) || formatarNome(nomeOriginal) || 'N/A'
+
               robotsList.push({
-                nome: formatarNome(nomeOriginal) || 'N/A',
+                nome: displayName,
                 instancias: runningValue,
                 status: 'Running',
                 statusColor: 'success',
@@ -397,35 +430,35 @@ export const DashboardCacheProvider = ({ children }) => {
         const status = jobsStatusData[nomeRpaKey]
         // Verificar se status existe e é um objeto válido
         if (!status || typeof status !== 'object') return
-        
+
         const nomeNormalizado = nomeRpaKey.toLowerCase().replace(/[-_]/g, '')
-        
+
         // Garantir que rpasData é um array antes de usar .find()
         const rpasArray = Array.isArray(rpasData) ? rpasData : []
-        const jaContabilizado = jobsContabilizados.has(nomeNormalizado) || 
+        const jaContabilizado = jobsContabilizados.has(nomeNormalizado) ||
           rpasArray.find(rpa => {
             if (!rpa || typeof rpa !== 'object') return false
             const nomeRpaComparacao = rpa.nome_rpa?.toLowerCase().replace(/[-_]/g, '')
-            return nomeRpaComparacao === nomeNormalizado || 
-                   rpa.nome_rpa?.toLowerCase() === nomeRpaKey.toLowerCase()
+            return nomeRpaComparacao === nomeNormalizado ||
+              rpa.nome_rpa?.toLowerCase() === nomeRpaKey.toLowerCase()
           })
-        
+
         if (!jaContabilizado) {
           // Garantir que status é válido antes de acessar propriedades
           if (!status || typeof status !== 'object') return
-          
+
           const tipo = (status.tipo) ? status.tipo : determinarTipo(nomeRpaKey)
           let dependenteDeExecucoes = true
-          
+
           if (tipo === 'Cronjob') {
             const cronjobCorrespondente = cronjobsOrdenados?.find(cj => {
               const nomeCjLower = cj.name?.toLowerCase()
               const nomeRpaLower = nomeRpaKey.toLowerCase()
-              return nomeCjLower === nomeRpaLower || 
-                     nomeCjLower?.includes(nomeRpaLower) ||
-                     nomeRpaLower?.includes(nomeCjLower?.replace('rpa-cronjob-', '').replace('-cronjob', ''))
+              return nomeCjLower === nomeRpaLower ||
+                nomeCjLower?.includes(nomeRpaLower) ||
+                nomeRpaLower?.includes(nomeCjLower?.replace('rpa-cronjob-', '').replace('-cronjob', ''))
             })
-            
+
             if (cronjobCorrespondente) {
               dependenteDeExecucoes = cronjobCorrespondente.dependente_de_execucoes !== false
             }
@@ -433,28 +466,19 @@ export const DashboardCacheProvider = ({ children }) => {
             const deploymentCorrespondente = deploymentsData?.find(dep => {
               const nomeDepLower = dep.name?.toLowerCase()
               const nomeRpaLower = nomeRpaKey.toLowerCase()
-              return nomeDepLower === nomeRpaLower || 
-                     nomeDepLower?.includes(nomeRpaLower) ||
-                     nomeRpaLower?.includes(nomeDepLower?.replace('deployment-', '').replace('-deployment', ''))
+              return nomeDepLower === nomeRpaLower ||
+                nomeDepLower?.includes(nomeRpaLower) ||
+                nomeRpaLower?.includes(nomeDepLower?.replace('deployment-', '').replace('-deployment', ''))
             })
-            
+
             if (deploymentCorrespondente) {
               dependenteDeExecucoes = deploymentCorrespondente.dependente_de_execucoes !== false
             }
           }
-          
-          if (dependenteDeExecucoes && status.execucoes_pendentes !== undefined && status.execucoes_pendentes !== null) {
-            execucoesPendentes += status.execucoes_pendentes || 0
-          }
-          
-          // Verificar se status tem as propriedades esperadas antes de acessar
-          const running = status.running || 0
-          const error = status.error || 0
-          const failed = status.failed || 0
-          
-          instanciasAtivas += running
-          falhasContainers += error + failed
-          
+
+          // Contagem de totais movida para início do arquivo
+
+
           if (running > 0 && nomeNormalizado) {
             rpasRodando.add(nomeNormalizado)
             jobsContabilizados.add(nomeNormalizado)
@@ -502,11 +526,20 @@ export const DashboardCacheProvider = ({ children }) => {
 
   // Ref para evitar requisições duplicadas simultâneas
   const vmResourcesLoadingRef = useRef(false)
+  const lastVMResourcesLoadRef = useRef(0)
 
   // Função para carregar recursos da VM
   const loadVMResources = async (isConnected) => {
     if (!isConnected) return
-    
+
+    // Throttle: não permitir requisições mais frequentes que 5 segundos
+    const now = Date.now()
+    const timeSinceLastLoad = now - lastVMResourcesLoadRef.current
+    if (timeSinceLastLoad < 5000) {
+      console.log(`[VM] Throttle ativo - última requisição há ${timeSinceLastLoad}ms, ignorando`)
+      return
+    }
+
     // Evitar requisições duplicadas simultâneas
     if (vmResourcesLoadingRef.current) {
       console.log('[VM] Requisição já em andamento, ignorando duplicata')
@@ -514,35 +547,40 @@ export const DashboardCacheProvider = ({ children }) => {
     }
 
     vmResourcesLoadingRef.current = true
+    lastVMResourcesLoadRef.current = now
     const requestId = `VM-REQ-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
     console.log(`[${requestId}] Carregando recursos da VM`)
     const startTime = Date.now()
-    
+
     try {
       const resources = await api.getVMResources()
       const elapsed = Date.now() - startTime
       console.log(`[${requestId}] Recursos da VM carregados em ${elapsed}ms`)
-      
+
       setCachedData(prev => {
         const now = new Date()
+        // Manter pontos suficientes para 7 dias de dados (a cada 10 segundos = 60480 pontos)
+        // Para economizar memória, limitamos a 60480 pontos (7 dias)
+        const MAX_POINTS = 60480
+
         const newMemoria = [...prev.resourcesHistory.memoria, {
           time: now,
           usado: resources.memoria.usada_gb,
           livre: resources.memoria.livre_gb
-        }].slice(-10)
-        
+        }].slice(-MAX_POINTS)
+
         const newArmazenamento = [...prev.resourcesHistory.armazenamento, {
           time: now,
           usado: resources.armazenamento.usado_gb,
           livre: resources.armazenamento.livre_gb
-        }].slice(-10)
-        
+        }].slice(-MAX_POINTS)
+
         const newCpu = [...prev.resourcesHistory.cpu, {
           time: now,
           usado: resources.cpu.usado,
           livre: resources.cpu.livre
-        }].slice(-10)
-        
+        }].slice(-MAX_POINTS)
+
         return {
           ...prev,
           vmResources: resources,
@@ -569,63 +607,68 @@ export const DashboardCacheProvider = ({ children }) => {
 
   // Inicializar intervalos quando o provider é montado
   useEffect(() => {
-    if (!isInitializedRef.current) {
-      isInitializedRef.current = true
-      
-      // Verificar conexão inicial e iniciar intervalos
-      const checkAndStart = async () => {
-        try {
-          const status = await api.getConnectionStatus()
-          const isConnected = status.ssh_connected && status.mysql_connected
-          
-          if (isConnected) {
-            // Carregar dados iniciais
-            await loadDashboardData(isConnected)
-            await loadVMResources(isConnected)
-          }
-          
-          // Iniciar intervalos mesmo se não estiver conectado (vai tentar reconectar)
-          // Reduzir frequência para evitar sobrecarga - cache do backend já atualiza em background
-          dataIntervalRef.current = setInterval(async () => {
-            const intervalId = `INTERVAL-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
-            try {
-              const status = await api.getConnectionStatus()
-              const isConnected = status.ssh_connected && status.mysql_connected
-              if (isConnected) {
-                await loadDashboardData(isConnected)
-              }
-            } catch (error) {
-              console.error(`[${intervalId}] Erro ao atualizar dados do dashboard:`, {
-                intervalId,
-                message: error.message,
-                error
-              })
-            }
-          }, 15000) // A cada 15 segundos (cache do backend atualiza a cada 10s)
-          
-          resourcesIntervalRef.current = setInterval(async () => {
-            const intervalId = `VM-INTERVAL-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
-            try {
-              const status = await api.getConnectionStatus()
-              const isConnected = status.ssh_connected && status.mysql_connected
-              if (isConnected) {
-                await loadVMResources(isConnected)
-              }
-            } catch (error) {
-              console.error(`[${intervalId}] Erro ao atualizar recursos da VM:`, {
-                intervalId,
-                message: error.message,
-                error
-              })
-            }
-          }, 15000) // A cada 15 segundos (cache do backend atualiza a cada 5s)
-        } catch (error) {
-          console.error('Erro ao verificar conexão inicial:', error)
-        }
-      }
-      
-      checkAndStart()
+    // Proteção dupla contra inicialização múltipla
+    if (isInitializedRef.current) {
+      console.log('[DASHBOARD CACHE] Já inicializado, ignorando nova inicialização')
+      return
     }
+
+    isInitializedRef.current = true
+    console.log('[DASHBOARD CACHE] Inicializando pela primeira vez...')
+
+    // Verificar conexão inicial e iniciar intervalos
+    const checkAndStart = async () => {
+      try {
+        const status = await api.getConnectionStatus()
+        const isConnected = status.ssh_connected && status.mysql_connected
+
+        if (isConnected) {
+          // Carregar dados iniciais
+          await loadDashboardData(isConnected)
+          await loadVMResources(isConnected)
+        }
+
+        // Iniciar intervalos mesmo se não estiver conectado (vai tentar reconectar)
+        // Reduzir frequência para evitar sobrecarga - cache do backend já atualiza em background
+        dataIntervalRef.current = setInterval(async () => {
+          const intervalId = `INTERVAL-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+          try {
+            const status = await api.getConnectionStatus()
+            const isConnected = status.ssh_connected && status.mysql_connected
+            if (isConnected) {
+              await loadDashboardData(isConnected)
+            }
+          } catch (error) {
+            console.error(`[${intervalId}] Erro ao atualizar dados do dashboard:`, {
+              intervalId,
+              message: error.message,
+              error
+            })
+          }
+        }, 10000) // A cada 10 segundos (sincronizado com o backend)
+
+        resourcesIntervalRef.current = setInterval(async () => {
+          const intervalId = `VM-INTERVAL-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+          try {
+            const status = await api.getConnectionStatus()
+            const isConnected = status.ssh_connected && status.mysql_connected
+            if (isConnected) {
+              await loadVMResources(isConnected)
+            }
+          } catch (error) {
+            console.error(`[${intervalId}] Erro ao atualizar recursos da VM:`, {
+              intervalId,
+              message: error.message,
+              error
+            })
+          }
+        }, 10000) // A cada 10 segundos (sincronizado com o backend)
+      } catch (error) {
+        console.error('Erro ao verificar conexão inicial:', error)
+      }
+    }
+
+    checkAndStart()
 
     // Limpar intervalos apenas quando o componente for desmontado completamente
     return () => {
@@ -641,20 +684,21 @@ export const DashboardCacheProvider = ({ children }) => {
     }
   }, [])
 
-  // Função para forçar atualização manual
-  const refreshData = async (isConnected) => {
+  // Função para forçar atualização manual (usar useCallback para evitar re-criação)
+  const refreshData = useCallback(async (isConnected) => {
     if (isConnected) {
+      console.log('[DASHBOARD CACHE] refreshData chamado manualmente')
       await loadDashboardData(isConnected)
       await loadVMResources(isConnected)
     }
-  }
+  }, []) // Dependências vazias porque as funções já têm suas próprias proteções
 
-  const value = {
+  const value = useMemo(() => ({
     cachedData,
     refreshData,
     loadDashboardData,
     loadVMResources,
-  }
+  }), [cachedData, refreshData])
 
   return (
     <DashboardCacheContext.Provider value={value}>

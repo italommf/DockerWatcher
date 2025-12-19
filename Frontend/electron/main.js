@@ -71,7 +71,7 @@ function createWindow() {
   // Carregar a aplicação
   const startURL = isDev
     ? 'http://localhost:5173'
-    : `file://${path.join(__dirname, '..', 'dist', 'index.html')}`
+    : `file://${path.join(__dirname, '..', 'renderer-dist', 'index.html')}`
 
   // Aguardar servidor estar pronto em dev
   if (isDev) {
@@ -126,9 +126,13 @@ function createWindow() {
   mainWindow.once('ready-to-show', () => {
     mainWindow.show()
     
-    // Abrir DevTools em modo desenvolvimento
+    // Abrir DevTools para ver logs (tanto em dev quanto em produção para debug)
     if (isDev) {
       mainWindow.webContents.openDevTools()
+    } else {
+      // Em produção, abrir DevTools também para debug (pode remover depois)
+      mainWindow.webContents.openDevTools()
+      console.log('💡 DevTools aberto para debug. Feche quando não precisar mais.')
     }
   })
 
@@ -151,11 +155,15 @@ function createWindow() {
   })
 }
 
+// Backend não é mais iniciado localmente - deve estar rodando em um servidor remoto
+// O usuário configura a URL do backend na interface de Configurações
+
 // Aguardar até que o app esteja pronto
 app.whenReady().then(() => {
-  // Não iniciar backend aqui - deve ser iniciado manualmente
-  console.log('🚀 Iniciando frontend...')
-  console.log('⚠️  Backend deve ser iniciado manualmente: python backend/run_server.py')
+  console.log('🚀 Iniciando aplicação...')
+  console.log('💡 Backend deve estar rodando em um servidor remoto')
+  console.log('💡 Configure a URL do backend em Configurações')
+  
   createWindow()
 
   app.on('activate', () => {

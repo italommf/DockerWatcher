@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import {
   Box,
   Typography,
@@ -13,6 +13,7 @@ import {
   Chip,
   InputAdornment,
   IconButton,
+  CircularProgress,
   Paper,
 } from '@mui/material'
 import { Add as AddIcon, Close as CloseIcon } from '@mui/icons-material'
@@ -20,9 +21,8 @@ import { Save, ArrowBack } from '@mui/icons-material'
 import api from '../services/api'
 import { useSnackbar } from 'notistack'
 
-export default function CriarRPA({ isConnected = true, onReconnect, onBack }) {
+export default function EditarRPA({ isConnected = true, onReconnect, onBack, rpaName }) {
   const [formData, setFormData] = useState({
-    nome_rpa: '',
     docker_tag: '',
     qtd_max_instancias: 1,
     qtd_ram_maxima: 512,
@@ -33,8 +33,42 @@ export default function CriarRPA({ isConnected = true, onReconnect, onBack }) {
   })
   const [tagInput, setTagInput] = useState('')
   const [loading, setLoading] = useState(false)
+  const [loadingData, setLoadingData] = useState(true)
   const [errors, setErrors] = useState({})
   const { enqueueSnackbar } = useSnackbar()
+
+  useEffect(() => {
+    if (rpaName) {
+      if (isConnected) {
+        loadRPAData()
+      } else {
+        setLoadingData(false)
+      }
+    }
+  }, [rpaName, isConnected])
+
+  const loadRPAData = async () => {
+    try {
+      setLoadingData(true)
+      const data = await api.getRPA(rpaName)
+      setFormData({
+        docker_tag: data.docker_tag || '',
+        qtd_max_instancias: data.qtd_max_instancias || 1,
+        qtd_ram_maxima: data.qtd_ram_maxima || 512,
+        utiliza_arquivos_externos: data.utiliza_arquivos_externos || false,
+        tempo_maximo_de_vida: data.tempo_maximo_de_vida || 600,
+        apelido: data.apelido || '',
+        tags: Array.isArray(data.tags) ? data.tags.filter(t => t !== 'Exec') : [],
+      })
+    } catch (error) {
+      if (isConnected) {
+        enqueueSnackbar(`Erro ao carregar RPA: ${error.message}`, { variant: 'error' })
+      }
+      if (onBack) onBack('rpas')
+    } finally {
+      setLoadingData(false)
+    }
+  }
 
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target
@@ -42,7 +76,6 @@ export default function CriarRPA({ isConnected = true, onReconnect, onBack }) {
       ...formData,
       [name]: type === 'checkbox' ? checked : type === 'number' ? parseInt(value) || 0 : value,
     })
-    // Limpar erro do campo quando o usuário começar a digitar
     if (errors[name]) {
       setErrors({ ...errors, [name]: '' })
     }
@@ -75,10 +108,6 @@ export default function CriarRPA({ isConnected = true, onReconnect, onBack }) {
   const validateForm = () => {
     const newErrors = {}
 
-    if (!formData.nome_rpa.trim()) {
-      newErrors.nome_rpa = 'Nome do RPA é obrigatório'
-    }
-
     if (!formData.docker_tag.trim()) {
       newErrors.docker_tag = 'Docker Tag é obrigatória'
     }
@@ -103,7 +132,7 @@ export default function CriarRPA({ isConnected = true, onReconnect, onBack }) {
     e.preventDefault()
 
     if (!isConnected) {
-      enqueueSnackbar('Você precisa estar conectado para criar um RPA', { variant: 'warning' })
+      enqueueSnackbar('Você precisa estar conectado para editar um RPA', { variant: 'warning' })
       return
     }
 
@@ -114,49 +143,48 @@ export default function CriarRPA({ isConnected = true, onReconnect, onBack }) {
 
     setLoading(true)
     try {
-      await api.createRPA(formData)
-      enqueueSnackbar('RPA criado com sucesso!', { variant: 'success' })
-      // Limpar formulário
-      setFormData({
-        nome_rpa: '',
-        docker_tag: '',
-        qtd_max_instancias: 1,
-        qtd_ram_maxima: 512,
-        utiliza_arquivos_externos: false,
-        tempo_maximo_de_vida: 600,
-        apelido: '',
-        tags: [],
-      })
-      setTagInput('')
-      // Voltar para a página de RPAs após 1 segundo
+      await api.updateRPA(rpaName, formData)
+      enqueueSnackbar('RPA atualizado com sucesso!', { variant: 'success' })
       setTimeout(() => {
         if (onBack) onBack('rpas')
       }, 1000)
     } catch (error) {
-      enqueueSnackbar(`Erro ao criar RPA: ${error.message}`, { variant: 'error' })
+      enqueueSnackbar(`Erro ao atualizar RPA: ${error.message}`, { variant: 'error' })
     } finally {
       setLoading(false)
     }
   }
 
-  if (!isConnected) {
+  if (!isConnected && !loadingData) {
     return (
       <Box sx={{ p: 3 }}>
         <Alert severity="warning" sx={{ mb: 3 }}>
-          Você está desconectado. Reconecte para criar um RPA.
+          Você está desconectado. Reconecte para editar o RPA.
         </Alert>
         {onReconnect && (
           <Button variant="outlined" onClick={onReconnect}>
             Reconectar
           </Button>
         )}
+        {onBack && (
+          <Button variant="outlined" onClick={() => onBack('rpas')} sx={{ ml: 2 }}>
+            Voltar
+          </Button>
+        )}
+      </Box>
+    )
+  }
+
+  if (loadingData) {
+    return (
+      <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%', width: '100%' }}>
+        <CircularProgress sx={{ color: '#fff' }} />
       </Box>
     )
   }
 
   return (
     <Box sx={{ display: 'flex', height: 'calc(100vh - 10px)', width: '100%', gap: 1, overflow: 'hidden', p: 0 }}>
-      {/* Paper wrapper com o estilo "Blue Gradient" do Dashboard (VM Metrics) */}
       <Paper
         elevation={0}
         sx={{
@@ -172,7 +200,6 @@ export default function CriarRPA({ isConnected = true, onReconnect, onBack }) {
             left: 0,
             right: 0,
             bottom: 0,
-            // Gradiente Azul/Roxo do Dashboard
             background: 'linear-gradient(135deg, #754c99 0%, #8fd0d7 100%)',
             opacity: 0.75,
             zIndex: 0,
@@ -187,7 +214,7 @@ export default function CriarRPA({ isConnected = true, onReconnect, onBack }) {
           overflowY: 'auto',
           p: 3,
           position: 'relative',
-          zIndex: 1, // Acima do gradiente
+          zIndex: 1,
         }}>
           <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
             <Typography
@@ -198,7 +225,7 @@ export default function CriarRPA({ isConnected = true, onReconnect, onBack }) {
                 textShadow: '0 2px 8px rgba(0, 0, 0, 0.3)',
               }}
             >
-              Criar Novo RPA
+              Editar RPA: {rpaName}
             </Typography>
             {onBack && (
               <Button
@@ -216,27 +243,10 @@ export default function CriarRPA({ isConnected = true, onReconnect, onBack }) {
             <CardContent>
               <form onSubmit={handleSubmit}>
                 <Grid container spacing={3}>
-                  <Grid item xs={12} md={6}>
-                    <TextField
-                      fullWidth
-                      label="Nome do RPA"
-                      name="nome_rpa"
-                      value={formData.nome_rpa}
-                      onChange={handleChange}
-                      error={!!errors.nome_rpa}
-                      helperText={errors.nome_rpa}
-                      required
-                      sx={{
-                        '& .MuiOutlinedInput-root': {
-                          color: '#fff',
-                          '& fieldset': { borderColor: 'rgba(255, 255, 255, 0.3)' },
-                          '&:hover fieldset': { borderColor: 'rgba(255, 255, 255, 0.5)' },
-                          '&.Mui-focused fieldset': { borderColor: '#10B981' },
-                        },
-                        '& .MuiInputLabel-root': { color: 'rgba(255, 255, 255, 0.7)' },
-                        '& .MuiInputLabel-root.Mui-focused': { color: '#10B981' },
-                      }}
-                    />
+                  <Grid item xs={12}>
+                    <Alert severity="info" sx={{ bgcolor: 'rgba(2, 136, 209, 0.2)', color: '#fff', '& .MuiAlert-icon': { color: '#29b6f6' } }}>
+                      O nome do RPA não pode ser alterado. Para mudar o nome, é necessário criar um novo RPA.
+                    </Alert>
                   </Grid>
 
                   <Grid item xs={12} md={6}>
@@ -352,6 +362,9 @@ export default function CriarRPA({ isConnected = true, onReconnect, onBack }) {
                             '& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track': {
                               backgroundColor: '#10B981',
                             },
+                            '& .MuiSwitch-track': {
+                              backgroundColor: 'rgba(255,255,255,0.3)',
+                            }
                           }}
                         />
                       }
@@ -445,7 +458,7 @@ export default function CriarRPA({ isConnected = true, onReconnect, onBack }) {
                         disabled={loading}
                         sx={{ bgcolor: '#10B981', color: '#fff', '&:hover': { bgcolor: '#059669' } }}
                       >
-                        {loading ? 'Criando...' : 'Criar RPA'}
+                        {loading ? 'Salvando...' : 'Salvar Alterações'}
                       </Button>
                     </Box>
                   </Grid>
@@ -458,3 +471,5 @@ export default function CriarRPA({ isConnected = true, onReconnect, onBack }) {
     </Box>
   )
 }
+
+

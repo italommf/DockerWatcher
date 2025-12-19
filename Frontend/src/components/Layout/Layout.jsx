@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { Box, Drawer } from '@mui/material'
+import { Box, Button, CircularProgress, Paper, Tooltip, Typography, useMediaQuery, useTheme } from '@mui/material'
+import { Refresh as RefreshIcon, Circle as CircleIcon } from '@mui/icons-material'
 import { useSnackbar } from 'notistack'
 import { useAppLogs } from '../../context/AppLogsContext'
 import Sidebar from './Sidebar'
@@ -14,24 +15,35 @@ import Logs from '../../pages/Logs'
 import CriarRPA from '../../pages/CriarRPA'
 import CriarCronjob from '../../pages/CriarCronjob'
 import CriarDeployment from '../../pages/CriarDeployment'
+import EditarDeployment from '../../pages/EditarDeployment'
+import EditarRPA from '../../pages/EditarRPA'
+import EditarCronjob from '../../pages/EditarCronjob'
 import api from '../../services/api'
 
-const drawerWidth = 280
-
 export default function Layout() {
+  const theme = useTheme()
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'))
+  const [sidebarOpen, setSidebarOpen] = useState(true)
   const [currentPage, setCurrentPage] = useState('dashboard')
+  const [editingItem, setEditingItem] = useState(null)
   const [connectionStatus, setConnectionStatus] = useState({ ssh: false, mysql: false })
   const [reconnectAttempts, setReconnectAttempts] = useState(0)
   const [isReconnecting, setIsReconnecting] = useState(false)
   const reconnectTimeoutRef = useRef(null)
-  const reconnectAttemptsRef = useRef(0) // Ref para manter o valor atualizado
-  const autoReconnectExhaustedRef = useRef(false) // Flag para indicar que tentativas automáticas esgotaram
+  const reconnectAttemptsRef = useRef(0)
+  const autoReconnectExhaustedRef = useRef(false)
   const { enqueueSnackbar } = useSnackbar()
   const { addLog } = useAppLogs()
 
+  // Collapse sidebar on mobile automatically
+  useEffect(() => {
+    if (isMobile) {
+      setSidebarOpen(false)
+    }
+  }, [isMobile])
+
   useEffect(() => {
     checkConnection()
-    // Não verificar automaticamente mais - apenas quando conectado
     return () => {
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current)
@@ -40,12 +52,10 @@ export default function Layout() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Monitorar mudanças no status de conexão
   useEffect(() => {
     const bothConnected = connectionStatus.ssh && connectionStatus.mysql
-    
+
     if (bothConnected) {
-      // Se ambos estão conectados, resetar tentativas e parar reconexões
       if (reconnectAttempts > 0 || isReconnecting) {
         setReconnectAttempts(0)
         reconnectAttemptsRef.current = 0
@@ -57,18 +67,16 @@ export default function Layout() {
         }
         addLog('success', 'Conexões restabelecidas com sucesso')
         enqueueSnackbar('Conexões restabelecidas com sucesso!', { variant: 'success' })
-        
-        // Iniciar verificação periódica normal
+
         const interval = setInterval(() => {
-          checkConnection(true) // Verificação silenciosa
-        }, 30000) // Verificar a cada 30s quando conectado
-        
+          checkConnection(true)
+        }, 30000)
+
         return () => clearInterval(interval)
       }
     } else if (reconnectAttempts === 0 && !isReconnecting && !autoReconnectExhaustedRef.current) {
-      // Primeira desconexão detectada - iniciar reconexão automática
       addLog('warning', 'Conexões perdidas. Iniciando tentativas de reconexão...')
-      enqueueSnackbar('Conexões perdidas. Tentando reconectar...', { 
+      enqueueSnackbar('Conexões perdidas. Tentando reconectar...', {
         variant: 'warning',
       })
       attemptReconnect(false)
@@ -78,9 +86,7 @@ export default function Layout() {
 
   const attemptReconnect = async (manual = false) => {
     if (!manual) {
-      // Usar ref para verificar o valor atualizado
       if (reconnectAttemptsRef.current >= 2) {
-        // Limite de tentativas automáticas atingido (2 tentativas)
         if (reconnectTimeoutRef.current) {
           clearTimeout(reconnectTimeoutRef.current)
           reconnectTimeoutRef.current = null
@@ -88,13 +94,12 @@ export default function Layout() {
         autoReconnectExhaustedRef.current = true
         setIsReconnecting(false)
         addLog('error', `Falha na reconexão após ${reconnectAttemptsRef.current} tentativas. Use o botão Reconectar para tentar novamente.`)
-        enqueueSnackbar('Falha na reconexão. Clique em "Reconectar" para tentar novamente.', { 
+        enqueueSnackbar('Falha na reconexão. Clique em "Reconectar" para tentar novamente.', {
           variant: 'error',
         })
         return
       }
-      
-      // Incrementar tentativas antes de iniciar
+
       reconnectAttemptsRef.current += 1
       const newAttempt = reconnectAttemptsRef.current
       setReconnectAttempts(newAttempt)
@@ -111,29 +116,22 @@ export default function Layout() {
         ssh: status.ssh_connected || false,
         mysql: status.mysql_connected || false,
       }
-      
+
       setConnectionStatus(newStatus)
 
       if (newStatus.ssh && newStatus.mysql) {
-        // Conectado com sucesso
         reconnectAttemptsRef.current = 0
         setReconnectAttempts(0)
         setIsReconnecting(false)
         addLog('success', 'Reconexão bem-sucedida!')
         enqueueSnackbar('Reconectado com sucesso!', { variant: 'success' })
-        
-        // Atualizar status de conexão para que as páginas possam recarregar
         setConnectionStatus(newStatus)
-        
-        // Não recarregar página inteira - deixar as páginas recarregarem seus dados
       } else {
-        // Ainda desconectado
         if (manual) {
           addLog('error', 'Falha na reconexão manual')
           enqueueSnackbar('Falha na reconexão. Verifique as configurações.', { variant: 'error' })
           setIsReconnecting(false)
         } else {
-          // Tentar novamente após 10 segundos (manter o valor atual de reconnectAttempts)
           reconnectTimeoutRef.current = setTimeout(() => {
             attemptReconnect(false)
           }, 10000)
@@ -145,7 +143,6 @@ export default function Layout() {
         enqueueSnackbar(`Erro na reconexão: ${error.message}`, { variant: 'error' })
         setIsReconnecting(false)
       } else {
-        // Tentar novamente após 10 segundos (manter o valor atual de reconnectAttempts)
         reconnectTimeoutRef.current = setTimeout(() => {
           attemptReconnect(false)
         }, 10000)
@@ -160,18 +157,14 @@ export default function Layout() {
         ssh: status.ssh_connected || false,
         mysql: status.mysql_connected || false,
       }
-      
-      // Só atualizar se o status mudou e não estamos em processo de reconexão
-      // Não atualizar se já esgotamos as tentativas automáticas (para evitar loops)
+
       if (!isReconnecting && !silent && !autoReconnectExhaustedRef.current) {
         setConnectionStatus(newStatus)
       } else if (silent) {
-        // Verificação silenciosa - apenas atualizar se ambos conectados
         if (newStatus.ssh && newStatus.mysql) {
           setConnectionStatus(newStatus)
         }
       } else if (newStatus.ssh && newStatus.mysql) {
-        // Se reconectou após esgotar tentativas, atualizar status e resetar flag
         autoReconnectExhaustedRef.current = false
         setConnectionStatus(newStatus)
       }
@@ -183,98 +176,91 @@ export default function Layout() {
   }
 
   const handleManualReconnect = () => {
-    if (isReconnecting) {
-      return // Já está reconectando
-    }
-    
-    // Limpar timeout anterior se existir
+    if (isReconnecting) return
+
     if (reconnectTimeoutRef.current) {
       clearTimeout(reconnectTimeoutRef.current)
       reconnectTimeoutRef.current = null
     }
-    
+
     reconnectAttemptsRef.current = 0
-    autoReconnectExhaustedRef.current = false // Resetar flag para permitir novas tentativas automáticas
-    setReconnectAttempts(0) // Resetar tentativas para reconexão manual
+    autoReconnectExhaustedRef.current = false
+    setReconnectAttempts(0)
     attemptReconnect(true)
   }
 
   const renderPage = () => {
     const isConnected = connectionStatus.ssh && connectionStatus.mysql
-    
     const handleBack = (page) => {
       setCurrentPage(page)
+      setEditingItem(null)
     }
-    
+    const handleEdit = (page, item) => {
+      setCurrentPage(page)
+      setEditingItem(item)
+    }
+
+    const props = { isConnected, onReconnect: handleManualReconnect }
+    const editProps = { ...props, onEdit: handleEdit }
+    const backProps = { ...props, onBack: handleBack }
+
     switch (currentPage) {
-      case 'dashboard':
-        return <Dashboard isConnected={isConnected} onReconnect={handleManualReconnect} />
-      case 'jobs':
-        return <Jobs isConnected={isConnected} onReconnect={handleManualReconnect} />
-      case 'rpas':
-        return <RPAs isConnected={isConnected} onReconnect={handleManualReconnect} />
-      case 'cronjobs':
-        return <Cronjobs isConnected={isConnected} onReconnect={handleManualReconnect} />
-      case 'deployments':
-        return <Deployments isConnected={isConnected} onReconnect={handleManualReconnect} />
-      case 'falhas':
-        return <Falhas isConnected={isConnected} onReconnect={handleManualReconnect} />
-      case 'configuracoes':
-        return <Configuracoes />
-      case 'logs':
-        return <Logs />
-      case 'criar-rpa':
-        return <CriarRPA isConnected={isConnected} onReconnect={handleManualReconnect} onBack={handleBack} />
-      case 'criar-cronjob':
-        return <CriarCronjob isConnected={isConnected} onReconnect={handleManualReconnect} onBack={handleBack} />
-      case 'criar-deployment':
-        return <CriarDeployment isConnected={isConnected} onReconnect={handleManualReconnect} onBack={handleBack} />
-      default:
-        return <Dashboard isConnected={isConnected} onReconnect={handleManualReconnect} />
+      case 'dashboard': return <Dashboard {...props} />
+      case 'jobs': return <Jobs {...props} />
+      case 'rpas': return <RPAs {...editProps} />
+      case 'cronjobs': return <Cronjobs {...editProps} />
+      case 'deployments': return <Deployments {...editProps} />
+      case 'falhas': return <Falhas {...props} />
+      case 'configuracoes': return <Configuracoes />
+      case 'logs': return <Logs />
+      case 'criar-rpa': return <CriarRPA {...backProps} />
+      case 'criar-cronjob': return <CriarCronjob {...backProps} />
+      case 'criar-deployment': return <CriarDeployment {...backProps} />
+      case 'editar-rpa': return <EditarRPA {...backProps} rpaName={editingItem} />
+      case 'editar-cronjob': return <EditarCronjob {...backProps} cronjobName={editingItem} />
+      case 'editar-deployment': return <EditarDeployment {...backProps} deploymentName={editingItem} />
+      default: return <Dashboard {...props} />
     }
   }
 
   return (
-    <Box sx={{ display: 'flex', height: '100vh' }}>
-      <Drawer
-        variant="permanent"
-        sx={{
-          width: drawerWidth,
-          flexShrink: 0,
-          '& .MuiDrawer-paper': {
-            width: drawerWidth,
-            boxSizing: 'border-box',
-            backgroundColor: 'rgba(30, 41, 59, 0.3)',
-            backdropFilter: 'blur(20px)',
-            borderRight: '1px solid rgba(255, 255, 255, 0.1)',
-            boxShadow: '0 8px 32px 0 rgba(0, 0, 0, 0.1)',
-            borderRadius: 0,
-            borderLeft: 'none',
-            top: 0,
-            height: '100vh',
-          },
-        }}
-      >
-        <Sidebar
-          currentPage={currentPage}
-          onPageChange={setCurrentPage}
-          connectionStatus={connectionStatus}
-          onReconnect={handleManualReconnect}
-          isReconnecting={isReconnecting}
-          reconnectAttempts={reconnectAttempts}
-        />
-      </Drawer>
+    <Box sx={{
+      display: 'flex',
+      height: '100vh',
+      bgcolor: 'background.default',
+      overflow: 'hidden',
+      // Remover o "efeito flutuante" (margem ao redor) para ocupar a tela inteira
+      p: 0
+    }}>
+      {/* Status + Reconectar (canto superior direito) */}
+      <Sidebar
+        isCollapsed={!sidebarOpen}
+        toggleSidebar={() => setSidebarOpen(!sidebarOpen)}
+        currentPage={currentPage}
+        onPageChange={setCurrentPage}
+        connectionStatus={connectionStatus}
+        onReconnect={handleManualReconnect}
+        isReconnecting={isReconnecting}
+      />
       <Box
         component="main"
         sx={{
           flexGrow: 1,
+          ml: 0, // Sidebar já tem margem, não precisa de gap adicional
+          mr: '5px', // Mesma margem que o sidebar usa para a esquerda
+          mt: '5px', // Mesma margem que o sidebar usa para o topo
+          mb: '5px', // Mesma margem para baixo
           bgcolor: 'background.default',
-          p: 3,
+          borderRadius: 0,
           overflow: 'auto',
-          position: 'relative',
+          display: 'flex',
+          flexDirection: 'column',
+          height: 'calc(100% - 10px)' // Compensar margens top/bottom
         }}
       >
-        {renderPage()}
+        <Box sx={{ flexGrow: 1, overflow: 'auto', pr: 0 }}>
+          {renderPage()}
+        </Box>
       </Box>
     </Box>
   )

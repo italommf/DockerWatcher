@@ -11,12 +11,12 @@ logger = logging.getLogger(__name__)
 # Não fazer django.setup() aqui - o Django já foi inicializado pelo manage.py
 # Apenas importar os modelos diretamente
 try:
-    from api.models import RPA, FailedPod
+    from api.models import RoboDockerizado, FailedPod
     from django.utils import timezone
     from datetime import timedelta
 except Exception as e:
     logger.warning(f"Erro ao importar modelos Django: {e}")
-    RPA = None
+    RoboDockerizado = None
     FailedPod = None
     timezone = None
     timedelta = None
@@ -66,11 +66,11 @@ class WatcherService:
                 rpas_config = {}  # Dicionário para armazenar configurações dos RPAs
                 
                 try:
-                    if RPA:
+                    if RoboDockerizado:
                         # Buscar apenas RPAs ativos
-                        rpas_ativos = RPA.objects.filter(status='active')
+                        rpas_ativos = RoboDockerizado.objects.filter(tipo='rpa', status='active', ativo=True)
                         for rpa_obj in rpas_ativos:
-                            nome_rpa = rpa_obj.nome_rpa
+                            nome_rpa = rpa_obj.nome
                             lista_nomes_rpas.append(nome_rpa)
                             # Armazenar configuração do RPA
                             rpas_config[nome_rpa] = {
@@ -81,7 +81,7 @@ class WatcherService:
                                 'tempo_maximo_de_vida': rpa_obj.tempo_maximo_de_vida,
                             }
                     else:
-                        logger.warning("Modelo RPA não disponível - aguardando...")
+                        logger.warning("Modelo RoboDockerizado não disponível - aguardando...")
                         time.sleep(5)
                         continue
                 except Exception as e:

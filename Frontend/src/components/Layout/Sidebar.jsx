@@ -1,5 +1,5 @@
-import React, { useState } from 'react'
-import { Box, List, ListItem, ListItemButton, ListItemIcon, ListItemText, Divider, Typography, Button, CircularProgress, Collapse } from '@mui/material'
+import React, { useState, useEffect } from 'react'
+import { Box, List, ListItem, ListItemButton, ListItemIcon, ListItemText, Divider, Typography, Collapse, IconButton, Tooltip, useTheme, Paper, Button, CircularProgress } from '@mui/material'
 import {
   Dashboard as DashboardIcon,
   Settings as SettingsIcon,
@@ -9,12 +9,16 @@ import {
   Cloud as CloudIcon,
   Error as ErrorIcon,
   SettingsApplications as SettingsApplicationsIcon,
-  Refresh as RefreshIcon,
   Description as DescriptionIcon,
   Add as AddIcon,
   ExpandLess,
   ExpandMore,
+  ChevronLeft,
+  ChevronRight,
+  Circle as CircleIcon,
+  Refresh as RefreshIcon
 } from '@mui/icons-material'
+import WatcherLogo from '../../assets/WatcherLogo.png'
 
 const menuItems = [
   { id: 'dashboard', label: 'Dashboard', icon: <DashboardIcon /> },
@@ -23,460 +27,267 @@ const menuItems = [
   { id: 'logs', label: 'Logs do App', icon: <DescriptionIcon /> },
 ]
 
-export default function Sidebar({ currentPage, onPageChange, connectionStatus, onReconnect, isReconnecting, reconnectAttempts = 0 }) {
+export default function Sidebar({ currentPage, onPageChange, isCollapsed, toggleSidebar, connectionStatus, onReconnect, isReconnecting }) {
+  const theme = useTheme()
   const isCreatePage = currentPage === 'criar-rpa' || currentPage === 'criar-cronjob' || currentPage === 'criar-deployment'
   const isRegisteredPage = currentPage === 'rpas' || currentPage === 'cronjobs' || currentPage === 'deployments'
+  // When collapsed, we can't really have "expanded" submenus in the traditional sense, maybe just popovers.
+  // For simplicity, when collapsed, clicking a group header could expand the sidebar OR just navigate to main.
+  // But let's keep the state.
   const [createMenuOpen, setCreateMenuOpen] = useState(isCreatePage)
   const [registeredMenuOpen, setRegisteredMenuOpen] = useState(isRegisteredPage)
 
-  // Expandir automaticamente se estiver em uma página de criação
-  React.useEffect(() => {
-    if (isCreatePage) {
-      setCreateMenuOpen(true)
-    }
-  }, [currentPage, isCreatePage])
+  useEffect(() => {
+    if (isCreatePage && !isCollapsed) setCreateMenuOpen(true)
+  }, [currentPage, isCreatePage, isCollapsed])
 
-  // Expandir automaticamente se estiver em uma página de robôs cadastrados
-  React.useEffect(() => {
-    if (isRegisteredPage) {
-      setRegisteredMenuOpen(true)
-    }
-  }, [currentPage, isRegisteredPage])
+  useEffect(() => {
+    if (isRegisteredPage && !isCollapsed) setRegisteredMenuOpen(true)
+  }, [currentPage, isRegisteredPage, isCollapsed])
 
   const handleCreateMenuToggle = () => {
-    setCreateMenuOpen(!createMenuOpen)
+    if (isCollapsed) {
+      toggleSidebar()
+      setCreateMenuOpen(true)
+      setRegisteredMenuOpen(false)
+    } else {
+      if (!createMenuOpen) setRegisteredMenuOpen(false)
+      setCreateMenuOpen(!createMenuOpen)
+    }
   }
 
   const handleRegisteredMenuToggle = () => {
-    setRegisteredMenuOpen(!registeredMenuOpen)
+    if (isCollapsed) {
+      toggleSidebar()
+      setRegisteredMenuOpen(true)
+      setCreateMenuOpen(false)
+    } else {
+      if (!registeredMenuOpen) setCreateMenuOpen(false)
+      setRegisteredMenuOpen(!registeredMenuOpen)
+    }
   }
 
+  const renderNavItem = (id, label, icon, onClick, selected, special = false) => (
+    <Tooltip title={isCollapsed ? label : ''} placement="right">
+      <ListItemButton
+        selected={selected}
+        onClick={onClick}
+        sx={{
+          mx: 1,
+          my: 0.5,
+          borderRadius: 3,
+          justifyContent: isCollapsed ? 'center' : 'flex-start',
+          px: isCollapsed ? 1 : 2,
+          minHeight: 48,
+          transition: 'all 0.2s',
+          color: selected ? theme.palette.primary.main : theme.palette.text.secondary,
+          bgcolor: selected ? (theme.palette.mode === 'light' ? 'rgba(0, 102, 255, 0.08)' : 'rgba(99, 102, 241, 0.16)') : 'transparent',
+          '&:hover': {
+            bgcolor: selected
+              ? (theme.palette.mode === 'light' ? 'rgba(0, 102, 255, 0.12)' : 'rgba(99, 102, 241, 0.24)')
+              : (theme.palette.mode === 'light' ? 'rgba(0, 0, 0, 0.04)' : 'rgba(255, 255, 255, 0.08)'),
+          },
+        }}
+      >
+        <ListItemIcon sx={{
+          color: 'inherit',
+          minWidth: isCollapsed ? 0 : 40,
+          mr: isCollapsed ? 0 : 0,
+          justifyContent: 'center'
+        }}>
+          {icon}
+        </ListItemIcon>
+        {!isCollapsed && (
+          <ListItemText
+            primary={label}
+            primaryTypographyProps={{
+              fontWeight: selected ? 600 : 400,
+              whiteSpace: 'normal',
+              wordBreak: 'break-word',
+              lineHeight: 1.2
+            }}
+          />
+        )}
+        {!isCollapsed && special && (
+          <Box component="span" ml={1}>
+            {/* Special icon/indicator if needed */}
+          </Box>
+        )}
+      </ListItemButton>
+    </Tooltip>
+  )
+
   return (
-    <Box 
-      sx={{ 
-        height: '100%', 
-        display: 'flex', 
+    <Paper
+      elevation={0}
+      sx={{
+        width: isCollapsed ? 80 : 280,
+        minWidth: isCollapsed ? 80 : 280,
+        flexShrink: 0,
+        height: '100%',
+        display: 'flex',
         flexDirection: 'column',
+        m: '5px',
+        borderRadius: '16px',
         overflow: 'hidden',
+        transition: 'width 0.3s ease, min-width 0.3s ease',
+        boxShadow: '0 8px 32px rgba(74, 144, 217, 0.1)',
+        background: 'linear-gradient(180deg, #FFFFFF 0%, #F8FBFF 100%)',
+        border: '1px solid rgba(74, 144, 217, 0.12)',
+        position: 'relative',
       }}
     >
-      <Box sx={{ p: 3, textAlign: 'center' }}>
-        <CloudIcon sx={{ fontSize: 40, color: '#6366F1', mb: 1 }} />
-        <Typography 
-          variant="h6" 
-          sx={{ 
-            fontWeight: 'bold', 
-            color: '#F8FAFC',
-            textShadow: '0 2px 8px rgba(0, 0, 0, 0.3)',
-          }}
-        >
-          Docker Watcher
-        </Typography>
-      </Box>
-
-      <Box sx={{ px: 2, mb: 2 }}>
+      {/* Header / Brand */}
+      <Box sx={{ p: 1, display: 'flex', alignItems: 'center', justifyContent: isCollapsed ? 'center' : 'space-between', minHeight: 80, overflow: 'hidden' }}>
         <Box
           sx={{
-            p: 2,
-            borderRadius: 2,
-            backgroundColor: 'rgba(30, 41, 59, 0.4)',
-            backdropFilter: 'blur(15px)',
-            border: '1px solid rgba(255, 255, 255, 0.1)',
-            boxShadow: '0 4px 16px 0 rgba(0, 0, 0, 0.1)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            flex: isCollapsed ? 'none' : 1,
+            width: isCollapsed ? '100%' : 'auto',
+            height: '100%',
+            mr: isCollapsed ? 0 : 1,
+            overflow: 'hidden',
           }}
         >
-          <Typography variant="caption" sx={{ color: '#CBD5E1', mb: 1, display: 'block' }}>
-            Status da Conexão
-          </Typography>
-          <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
-            <Box
-              sx={{
-                width: 8,
-                height: 8,
-                borderRadius: '50%',
-                backgroundColor: connectionStatus.ssh ? '#10B981' : '#EF4444',
-                mr: 1,
-                boxShadow: connectionStatus.ssh ? '0 0 8px #10B981' : '0 0 8px #EF4444',
-              }}
-            />
-            <Typography variant="body2" sx={{ color: '#F8FAFC' }}>
-              VM Linux Docker
-            </Typography>
-          </Box>
-          <Box sx={{ display: 'flex', alignItems: 'center' }}>
-            <Box
-              sx={{
-                width: 8,
-                height: 8,
-                borderRadius: '50%',
-                backgroundColor: connectionStatus.mysql ? '#10B981' : '#EF4444',
-                mr: 1,
-                boxShadow: connectionStatus.mysql ? '0 0 8px #10B981' : '0 0 8px #EF4444',
-              }}
-            />
-            <Typography variant="body2" sx={{ color: '#F8FAFC' }}>
-              Database BWA
-            </Typography>
-          </Box>
-          <Button
-            variant="outlined"
-            size="small"
-            startIcon={isReconnecting ? <CircularProgress size={16} /> : <RefreshIcon />}
-            onClick={onReconnect}
-            disabled={isReconnecting}
-            sx={{
-              mt: 2,
+          <img
+            src={WatcherLogo}
+            alt="Docker Watcher"
+            style={{
               width: '100%',
-              color: '#CBD5E1',
-              borderColor: 'rgba(255, 255, 255, 0.2)',
-              '&:hover': {
-                borderColor: 'rgba(255, 255, 255, 0.3)',
-                backgroundColor: 'rgba(255, 255, 255, 0.05)',
-              },
+              height: '100%',
+              objectFit: 'contain',
             }}
-          >
-            Reconectar
-          </Button>
-          {isReconnecting && reconnectAttempts > 0 && (
-            <Typography 
-              variant="caption" 
-              sx={{ 
-                mt: 1, 
-                display: 'block', 
-                textAlign: 'center',
-                color: '#94A3B8',
-                fontSize: '0.75rem',
-              }}
-            >
-              Tentativa automática {reconnectAttempts}/2
-            </Typography>
+          />
+        </Box>
+        {!isCollapsed && (
+          <IconButton onClick={toggleSidebar} size="small">
+            <ChevronLeft />
+          </IconButton>
+        )}
+      </Box>
+
+      {/* Toggle button when collapsed (centered) */}
+      {isCollapsed && (
+        <Box sx={{ display: 'flex', justifyContent: 'center', mb: 1 }}>
+          <IconButton onClick={toggleSidebar} size="small">
+            <ChevronRight />
+          </IconButton>
+        </Box>
+      )}
+
+      <Divider sx={{ mx: 2, mb: 1 }} />
+
+      <Box sx={{ flexGrow: 1, overflowY: 'auto', overflowX: 'hidden' }}>
+        <List component="nav">
+          {menuItems.map(item => (
+            <React.Fragment key={item.id}>
+              {renderNavItem(item.id, item.label, item.icon, () => onPageChange(item.id), currentPage === item.id)}
+            </React.Fragment>
+          ))}
+
+          <Divider sx={{ my: 1, mx: 2 }} />
+
+          {/* Robôs Cadastrados Group */}
+          {renderNavItem(
+            'group-registered',
+            'Robôs Cadastrados',
+            <RobotIcon />,
+            handleRegisteredMenuToggle,
+            isRegisteredPage,
+            registeredMenuOpen
+          )}
+
+          <Collapse in={registeredMenuOpen && !isCollapsed} timeout="auto" unmountOnExit>
+            <List component="div" disablePadding>
+              {renderNavItem('rpas', 'RPAs', <CircleIcon sx={{ fontSize: 8 }} />, () => onPageChange('rpas'), currentPage === 'rpas')}
+              {renderNavItem('cronjobs', 'Cronjobs', <CircleIcon sx={{ fontSize: 8 }} />, () => onPageChange('cronjobs'), currentPage === 'cronjobs')}
+              {renderNavItem('deployments', 'Deployments', <CircleIcon sx={{ fontSize: 8 }} />, () => onPageChange('deployments'), currentPage === 'deployments')}
+            </List>
+          </Collapse>
+
+          {/* Adicionar Robô Group */}
+          {renderNavItem(
+            'group-new',
+            'Adicionar Robô',
+            <AddIcon />,
+            handleCreateMenuToggle,
+            isCreatePage,
+            createMenuOpen
+          )}
+
+          <Collapse in={createMenuOpen && !isCollapsed} timeout="auto" unmountOnExit>
+            <List component="div" disablePadding>
+              {renderNavItem('criar-rpa', 'Novo RPA', <CircleIcon sx={{ fontSize: 8 }} />, () => onPageChange('criar-rpa'), currentPage === 'criar-rpa')}
+              {renderNavItem('criar-cronjob', 'Novo Cronjob', <CircleIcon sx={{ fontSize: 8 }} />, () => onPageChange('criar-cronjob'), currentPage === 'criar-cronjob')}
+              {renderNavItem('criar-deployment', 'Novo Deployment', <CircleIcon sx={{ fontSize: 8 }} />, () => onPageChange('criar-deployment'), currentPage === 'criar-deployment')}
+            </List>
+          </Collapse>
+
+        </List>
+      </Box>
+
+      <Box sx={{ p: 2 }}>
+        {renderNavItem('configuracoes', 'Configurações', <SettingsApplicationsIcon />, () => onPageChange('configuracoes'), currentPage === 'configuracoes')}
+
+        <Divider sx={{ my: 1 }} />
+
+        {/* Connection Status Section */}
+        <Box sx={{
+          mt: 2,
+          px: isCollapsed ? 0 : 2,
+        }}>
+          {!isCollapsed ? (
+            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <CircleIcon sx={{ fontSize: 10, color: connectionStatus?.mysql ? 'success.main' : 'error.main' }} />
+                  <Typography variant="body2" sx={{ color: 'text.secondary', fontWeight: 500, fontSize: '0.8rem' }}>
+                    BWAv4
+                  </Typography>
+                </Box>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <CircleIcon sx={{ fontSize: 10, color: connectionStatus?.ssh ? 'success.main' : 'error.main' }} />
+                  <Typography variant="body2" sx={{ color: 'text.secondary', fontWeight: 500, fontSize: '0.8rem' }}>
+                    SSH Linux
+                  </Typography>
+                </Box>
+              </Box>
+
+              <Tooltip title={isReconnecting ? 'Reconectando...' : 'Reconectar'}>
+                <IconButton
+                  onClick={onReconnect}
+                  disabled={isReconnecting}
+                  size="small"
+                  sx={{
+                    bgcolor: 'rgba(0,0,0,0.02)',
+                    '&:hover': { bgcolor: 'rgba(0,0,0,0.05)' }
+                  }}
+                >
+                  {isReconnecting ? <CircularProgress size={16} /> : <RefreshIcon fontSize="small" />}
+                </IconButton>
+              </Tooltip>
+            </Box>
+          ) : (
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, alignItems: 'center' }}>
+              <Tooltip title={`Database BWA: ${connectionStatus?.mysql ? 'Conectado' : 'Desconectado'}`} placement="right">
+                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 0.5 }}>
+                  <CircleIcon sx={{ fontSize: 8, color: connectionStatus?.mysql ? 'success.main' : 'error.main' }} />
+                  <Typography variant="caption" sx={{ fontSize: '0.6rem', fontWeight: 700, color: 'text.secondary' }}>DB</Typography>
+                </Box>
+              </Tooltip>
+              <Tooltip title={`SSH Linux: ${connectionStatus?.ssh ? 'Conectado' : 'Desconectado'}`} placement="right">
+                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 0.5 }}>
+                  <CircleIcon sx={{ fontSize: 8, color: connectionStatus?.ssh ? 'success.main' : 'error.main' }} />
+                  <Typography variant="caption" sx={{ fontSize: '0.6rem', fontWeight: 700, color: 'text.secondary' }}>VM</Typography>
+                </Box>
+              </Tooltip>
+            </Box>
           )}
         </Box>
       </Box>
 
-      <Divider sx={{ borderColor: 'rgba(255, 255, 255, 0.1)', mx: 2 }} />
-
-      <List sx={{ flexGrow: 1, pt: 2 }}>
-        {menuItems.map((item) => (
-          <ListItem key={item.id} disablePadding sx={{ mb: 0.5 }}>
-            <ListItemButton
-              selected={currentPage === item.id}
-              onClick={() => onPageChange(item.id)}
-              sx={{
-                mx: 1,
-                borderRadius: 2,
-                backdropFilter: 'blur(10px)',
-                '&.Mui-selected': {
-                  backgroundColor: 'rgba(99, 102, 241, 0.4)',
-                  backdropFilter: 'blur(15px)',
-                  color: 'white',
-                  boxShadow: '0 4px 16px 0 rgba(99, 102, 241, 0.3)',
-                  border: '1px solid rgba(255, 255, 255, 0.2)',
-                  '&:hover': {
-                    backgroundColor: 'rgba(99, 102, 241, 0.5)',
-                  },
-                },
-                '&:hover': {
-                  backgroundColor: 'rgba(255, 255, 255, 0.1)',
-                  backdropFilter: 'blur(10px)',
-                },
-              }}
-            >
-              <ListItemIcon sx={{ color: currentPage === item.id ? 'white' : '#CBD5E1', minWidth: 40 }}>
-                {item.icon}
-              </ListItemIcon>
-              <ListItemText primary={item.label} />
-            </ListItemButton>
-          </ListItem>
-        ))}
-
-        {/* Menu Robôs Cadastrados - Expansível */}
-        <ListItem disablePadding sx={{ mb: 0.5 }}>
-          <ListItemButton
-            selected={isRegisteredPage}
-            onClick={handleRegisteredMenuToggle}
-            sx={{
-              mx: 1,
-              borderRadius: 2,
-              backdropFilter: 'blur(10px)',
-              '&.Mui-selected': {
-                backgroundColor: 'rgba(99, 102, 241, 0.4)',
-                backdropFilter: 'blur(15px)',
-                color: 'white',
-                boxShadow: '0 4px 16px 0 rgba(99, 102, 241, 0.3)',
-                border: '1px solid rgba(255, 255, 255, 0.2)',
-                '&:hover': {
-                  backgroundColor: 'rgba(99, 102, 241, 0.5)',
-                },
-              },
-              '&:hover': {
-                backgroundColor: 'rgba(255, 255, 255, 0.1)',
-                backdropFilter: 'blur(10px)',
-              },
-            }}
-          >
-            <ListItemIcon sx={{ color: isRegisteredPage ? 'white' : '#CBD5E1', minWidth: 40 }}>
-              <RobotIcon />
-            </ListItemIcon>
-            <ListItemText primary="Robôs Cadastrados" />
-            <Box sx={{ color: isRegisteredPage ? 'white' : '#CBD5E1' }}>
-              {registeredMenuOpen ? <ExpandLess /> : <ExpandMore />}
-            </Box>
-          </ListItemButton>
-        </ListItem>
-        <Collapse in={registeredMenuOpen} timeout="auto" unmountOnExit>
-          <List component="div" disablePadding>
-            <ListItemButton
-              selected={currentPage === 'rpas'}
-              onClick={() => onPageChange('rpas')}
-              sx={{
-                mx: 1,
-                ml: 4,
-                borderRadius: 2,
-                backdropFilter: 'blur(10px)',
-                '&.Mui-selected': {
-                  backgroundColor: 'rgba(99, 102, 241, 0.4)',
-                  backdropFilter: 'blur(15px)',
-                  color: 'white',
-                  boxShadow: '0 4px 16px 0 rgba(99, 102, 241, 0.3)',
-                  border: '1px solid rgba(255, 255, 255, 0.2)',
-                  '&:hover': {
-                    backgroundColor: 'rgba(99, 102, 241, 0.5)',
-                  },
-                },
-                '&:hover': {
-                  backgroundColor: 'rgba(255, 255, 255, 0.1)',
-                  backdropFilter: 'blur(10px)',
-                },
-              }}
-            >
-              <ListItemIcon sx={{ color: currentPage === 'rpas' ? 'white' : '#CBD5E1', minWidth: 40 }}>
-                <RobotIcon />
-              </ListItemIcon>
-              <ListItemText primary="RPAs" />
-            </ListItemButton>
-            <ListItemButton
-              selected={currentPage === 'cronjobs'}
-              onClick={() => onPageChange('cronjobs')}
-              sx={{
-                mx: 1,
-                ml: 4,
-                borderRadius: 2,
-                backdropFilter: 'blur(10px)',
-                '&.Mui-selected': {
-                  backgroundColor: 'rgba(99, 102, 241, 0.4)',
-                  backdropFilter: 'blur(15px)',
-                  color: 'white',
-                  boxShadow: '0 4px 16px 0 rgba(99, 102, 241, 0.3)',
-                  border: '1px solid rgba(255, 255, 255, 0.2)',
-                  '&:hover': {
-                    backgroundColor: 'rgba(99, 102, 241, 0.5)',
-                  },
-                },
-                '&:hover': {
-                  backgroundColor: 'rgba(255, 255, 255, 0.1)',
-                  backdropFilter: 'blur(10px)',
-                },
-              }}
-            >
-              <ListItemIcon sx={{ color: currentPage === 'cronjobs' ? 'white' : '#CBD5E1', minWidth: 40 }}>
-                <ScheduleIcon />
-              </ListItemIcon>
-              <ListItemText primary="Cronjobs" />
-            </ListItemButton>
-            <ListItemButton
-              selected={currentPage === 'deployments'}
-              onClick={() => onPageChange('deployments')}
-              sx={{
-                mx: 1,
-                ml: 4,
-                borderRadius: 2,
-                backdropFilter: 'blur(10px)',
-                '&.Mui-selected': {
-                  backgroundColor: 'rgba(99, 102, 241, 0.4)',
-                  backdropFilter: 'blur(15px)',
-                  color: 'white',
-                  boxShadow: '0 4px 16px 0 rgba(99, 102, 241, 0.3)',
-                  border: '1px solid rgba(255, 255, 255, 0.2)',
-                  '&:hover': {
-                    backgroundColor: 'rgba(99, 102, 241, 0.5)',
-                  },
-                },
-                '&:hover': {
-                  backgroundColor: 'rgba(255, 255, 255, 0.1)',
-                  backdropFilter: 'blur(10px)',
-                },
-              }}
-            >
-              <ListItemIcon sx={{ color: currentPage === 'deployments' ? 'white' : '#CBD5E1', minWidth: 40 }}>
-                <RocketIcon />
-              </ListItemIcon>
-              <ListItemText primary="Deployments" />
-            </ListItemButton>
-          </List>
-        </Collapse>
-
-        {/* Menu Adicionar Robô - Expansível */}
-        <ListItem disablePadding sx={{ mb: 0.5 }}>
-          <ListItemButton
-            selected={isCreatePage}
-            onClick={handleCreateMenuToggle}
-            sx={{
-              mx: 1,
-              borderRadius: 2,
-              backdropFilter: 'blur(10px)',
-              '&.Mui-selected': {
-                backgroundColor: 'rgba(99, 102, 241, 0.4)',
-                backdropFilter: 'blur(15px)',
-                color: 'white',
-                boxShadow: '0 4px 16px 0 rgba(99, 102, 241, 0.3)',
-                border: '1px solid rgba(255, 255, 255, 0.2)',
-                '&:hover': {
-                  backgroundColor: 'rgba(99, 102, 241, 0.5)',
-                },
-              },
-              '&:hover': {
-                backgroundColor: 'rgba(255, 255, 255, 0.1)',
-                backdropFilter: 'blur(10px)',
-              },
-            }}
-          >
-            <ListItemIcon sx={{ color: isCreatePage ? 'white' : '#CBD5E1', minWidth: 40 }}>
-              <AddIcon />
-            </ListItemIcon>
-            <ListItemText primary="Adicionar Robô" />
-            <Box sx={{ color: isCreatePage ? 'white' : '#CBD5E1' }}>
-              {createMenuOpen ? <ExpandLess /> : <ExpandMore />}
-            </Box>
-          </ListItemButton>
-        </ListItem>
-        <Collapse in={createMenuOpen} timeout="auto" unmountOnExit>
-          <List component="div" disablePadding>
-            <ListItemButton
-              selected={currentPage === 'criar-rpa'}
-              onClick={() => onPageChange('criar-rpa')}
-              sx={{
-                mx: 1,
-                ml: 4,
-                borderRadius: 2,
-                backdropFilter: 'blur(10px)',
-                '&.Mui-selected': {
-                  backgroundColor: 'rgba(99, 102, 241, 0.4)',
-                  backdropFilter: 'blur(15px)',
-                  color: 'white',
-                  boxShadow: '0 4px 16px 0 rgba(99, 102, 241, 0.3)',
-                  border: '1px solid rgba(255, 255, 255, 0.2)',
-                  '&:hover': {
-                    backgroundColor: 'rgba(99, 102, 241, 0.5)',
-                  },
-                },
-                '&:hover': {
-                  backgroundColor: 'rgba(255, 255, 255, 0.1)',
-                  backdropFilter: 'blur(10px)',
-                },
-              }}
-            >
-              <ListItemIcon sx={{ color: currentPage === 'criar-rpa' ? 'white' : '#CBD5E1', minWidth: 40 }}>
-                <RobotIcon />
-              </ListItemIcon>
-              <ListItemText primary="Novo RPA" />
-            </ListItemButton>
-            <ListItemButton
-              selected={currentPage === 'criar-cronjob'}
-              onClick={() => onPageChange('criar-cronjob')}
-              sx={{
-                mx: 1,
-                ml: 4,
-                borderRadius: 2,
-                backdropFilter: 'blur(10px)',
-                '&.Mui-selected': {
-                  backgroundColor: 'rgba(99, 102, 241, 0.4)',
-                  backdropFilter: 'blur(15px)',
-                  color: 'white',
-                  boxShadow: '0 4px 16px 0 rgba(99, 102, 241, 0.3)',
-                  border: '1px solid rgba(255, 255, 255, 0.2)',
-                  '&:hover': {
-                    backgroundColor: 'rgba(99, 102, 241, 0.5)',
-                  },
-                },
-                '&:hover': {
-                  backgroundColor: 'rgba(255, 255, 255, 0.1)',
-                  backdropFilter: 'blur(10px)',
-                },
-              }}
-            >
-              <ListItemIcon sx={{ color: currentPage === 'criar-cronjob' ? 'white' : '#CBD5E1', minWidth: 40 }}>
-                <ScheduleIcon />
-              </ListItemIcon>
-              <ListItemText primary="Novo Cronjob" />
-            </ListItemButton>
-            <ListItemButton
-              selected={currentPage === 'criar-deployment'}
-              onClick={() => onPageChange('criar-deployment')}
-              sx={{
-                mx: 1,
-                ml: 4,
-                borderRadius: 2,
-                backdropFilter: 'blur(10px)',
-                '&.Mui-selected': {
-                  backgroundColor: 'rgba(99, 102, 241, 0.4)',
-                  backdropFilter: 'blur(15px)',
-                  color: 'white',
-                  boxShadow: '0 4px 16px 0 rgba(99, 102, 241, 0.3)',
-                  border: '1px solid rgba(255, 255, 255, 0.2)',
-                  '&:hover': {
-                    backgroundColor: 'rgba(99, 102, 241, 0.5)',
-                  },
-                },
-                '&:hover': {
-                  backgroundColor: 'rgba(255, 255, 255, 0.1)',
-                  backdropFilter: 'blur(10px)',
-                },
-              }}
-            >
-              <ListItemIcon sx={{ color: currentPage === 'criar-deployment' ? 'white' : '#CBD5E1', minWidth: 40 }}>
-                <RocketIcon />
-              </ListItemIcon>
-              <ListItemText primary="Novo Deployment" />
-            </ListItemButton>
-          </List>
-        </Collapse>
-      </List>
-
-      <Divider sx={{ borderColor: 'rgba(255, 255, 255, 0.1)', mx: 2, mt: 'auto' }} />
-
-      <List sx={{ pb: 2 }}>
-        <ListItem disablePadding>
-          <ListItemButton
-            selected={currentPage === 'configuracoes'}
-            onClick={() => onPageChange('configuracoes')}
-            sx={{
-              mx: 1,
-              borderRadius: 2,
-              backdropFilter: 'blur(10px)',
-              '&.Mui-selected': {
-                backgroundColor: 'rgba(99, 102, 241, 0.4)',
-                backdropFilter: 'blur(15px)',
-                color: 'white',
-                boxShadow: '0 4px 16px 0 rgba(99, 102, 241, 0.3)',
-                border: '1px solid rgba(255, 255, 255, 0.2)',
-                '&:hover': {
-                  backgroundColor: 'rgba(99, 102, 241, 0.5)',
-                },
-              },
-              '&:hover': {
-                backgroundColor: 'rgba(255, 255, 255, 0.1)',
-                backdropFilter: 'blur(10px)',
-              },
-            }}
-          >
-            <ListItemIcon sx={{ color: currentPage === 'configuracoes' ? 'white' : '#CBD5E1', minWidth: 40 }}>
-              <SettingsApplicationsIcon />
-            </ListItemIcon>
-            <ListItemText primary="Configurações" />
-          </ListItemButton>
-        </ListItem>
-      </List>
-    </Box>
+    </Paper>
   )
 }

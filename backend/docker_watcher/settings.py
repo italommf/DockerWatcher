@@ -65,6 +65,10 @@ WSGI_APPLICATION = 'docker_watcher.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/stable/ref/settings/#databases
 # Usar MySQL externo (configurado via config.ini)
+# 
+# IMPORTANTE: 
+# - Django usa o banco 'docker_watcher' para armazenar robôs (tabela: robos_dockerizados)
+# - O banco 'bwav4' continua sendo usado pelo database_service para consultar execuções
 try:
     from backend.config.ssh_config import get_mysql_config
     mysql_config = get_mysql_config()
@@ -72,14 +76,18 @@ try:
     DATABASES = {
         'default': {
             'ENGINE': 'django.db.backends.mysql',
-            'NAME': mysql_config['database'],
+            'NAME': 'docker_watcher',  # Banco para armazenar robôs dockerizados
             'USER': mysql_config['user'],
             'PASSWORD': mysql_config['password'],
             'HOST': mysql_config['host'],
             'PORT': mysql_config['port'],
+            'CONN_MAX_AGE': 0,  # Fechar conexões após cada requisição (evita acúmulo)
             'OPTIONS': {
                 'charset': 'utf8mb4',
                 'init_command': "SET sql_mode='STRICT_TRANS_TABLES'",
+                'connect_timeout': 10,  # Timeout de conexão em segundos
+                'read_timeout': 30,  # Timeout de leitura
+                'write_timeout': 30,  # Timeout de escrita
             },
         }
     }

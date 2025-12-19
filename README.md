@@ -400,22 +400,126 @@ A aplicação utiliza um sistema de cache em múltiplas camadas:
 - **PollingService**: Atualiza dados do Kubernetes e MySQL periodicamente
 - **WatcherService**: Monitora execuções pendentes e cria jobs automaticamente
 
-## 📦 Build
+## 📦 Build Standalone (100% Autônomo)
 
-### Gerar Executável Windows
+### 🎯 Build Completo Standalone
 
+O Docker Watcher pode ser empacotado como um executável **100% standalone** que **não requer Python instalado** no sistema de destino.
+
+#### Pré-requisitos para Build
+
+1. **Python 3.8+** instalado na máquina de build
+2. **Node.js 18+** instalado
+3. **PyInstaller** (será instalado automaticamente se necessário)
+
+#### Processo de Build
+
+**Opção 1: Script Automatizado (Recomendado)**
+
+**Windows:**
 ```bash
-cd Frontend
-npm run package
+build_standalone.bat
 ```
 
+**Linux/Mac:**
+```bash
+chmod +x build_standalone.sh
+./build_standalone.sh
+```
+
+**Opção 2: Manual (Passo a Passo)**
+
+1. **Build do Backend Standalone:**
+```bash
+cd backend
+python build_standalone.py
+```
+
+Este comando irá:
+- Instalar PyInstaller (se necessário)
+- Criar um executável standalone do backend Django
+- Copiar o executável para `Frontend/build/backend/`
+
+2. **Build do Frontend React:**
+```bash
+cd Frontend
+npm run build
+```
+
+3. **Empacotar Electron:**
+```bash
+cd Frontend
+npm run build:electron
+```
+
+### 📦 Resultado do Build
+
 O executável será gerado em:
-- `Frontend/out/` (modo desenvolvimento)
-- `Frontend/dist/` (modo produção)
+- **Windows**: `Frontend/dist/Docker Watcher X.X.X.exe` (executável único portátil)
+- **Pasta de recursos**: Ao lado do .exe será criada uma pasta `resources/` (necessária para o Electron)
+- **Backend**: Pasta `backend/` ao lado do .exe com o executável do backend Django
 
-### Build do Backend
+**Nota**: O formato "portable" cria um único `.exe` que pode ser executado diretamente sem instalação. A pasta `resources/` é criada automaticamente e é necessária para o funcionamento do Electron. O backend é iniciado automaticamente quando você executa o `.exe`.
 
-O backend Django é empacotado junto com o Electron, não é necessário build separado.
+### ✅ Executável 100% Standalone
+
+O executável gerado é **completamente autônomo**:
+
+- ✅ **Não requer Python** instalado no sistema
+- ✅ **Não requer dependências** Python instaladas
+- ✅ **Inclui tudo** necessário para funcionar
+- ✅ **Backend Django** empacotado como executável standalone
+- ✅ **Frontend React** empacotado como aplicação Electron
+- ✅ **Configurações** (`shared/config.ini`) incluídas
+
+### 🚀 Como Funciona
+
+Quando você executa o `.exe`:
+
+1. ✅ O Electron inicia automaticamente
+2. ✅ O backend Django standalone é iniciado automaticamente em background
+3. ✅ A interface React é carregada
+4. ✅ Tudo funciona sem necessidade de Python ou dependências externas
+
+**Nota**: O backend é iniciado como um processo separado. Quando você fecha a aplicação, o backend é encerrado automaticamente.
+
+### 📝 Configuração do Executável
+
+O arquivo `shared/config.ini` é incluído no executável. Você pode:
+
+1. **Configurar antes do build**: Edite `shared/config.ini` antes de executar o build
+2. **Configurar após instalação**: O arquivo estará em `resources/app.asar.unpacked/shared/config.ini`
+
+### 🔧 Troubleshooting
+
+**Erro: "Executável do backend não encontrado"**
+- Certifique-se de executar `build_standalone.py` antes de empacotar o Electron
+- Verifique se o executável está em `Frontend/build/backend/docker-watcher-backend.exe`
+
+**Backend não inicia ou inicia em outro endereço**
+1. **Verifique os logs**: O DevTools será aberto automaticamente. Veja o console para logs detalhados
+2. **Verifique se o backend foi encontrado**: Os logs mostrarão todos os caminhos testados
+3. **Verifique a porta 8000**: Os logs mostrarão se a porta está disponível
+4. **Verifique os logs do backend**: Todos os logs do backend aparecerão no console com prefixo `[Backend]`
+5. **Teste o backend standalone manualmente**:
+   - Vá para `Frontend/dist/win-unpacked/backend/`
+   - Execute `docker-watcher-backend.exe` manualmente
+   - Veja se há erros
+6. **Verifique o config.ini**: Certifique-se de que `shared/config.ini` está configurado corretamente
+7. **Verifique se há outras instâncias rodando**: Feche todas as instâncias do Docker Watcher
+
+**Erro: "PyInstaller não encontrado"**
+- O script tentará instalar automaticamente
+- Ou instale manualmente: `pip install pyinstaller`
+
+**Executável muito grande**
+- Isso é normal! O executável inclui Python e todas as dependências
+- Tamanho esperado: ~100-200MB (dependendo das dependências)
+
+**Como ver os logs em produção**
+- O DevTools será aberto automaticamente quando você executar o .exe
+- Todos os logs aparecerão no console do DevTools
+- Procure por mensagens com prefixo `[Backend]` para ver os logs do backend Django
 
 ## 🛠️ Tecnologias
 

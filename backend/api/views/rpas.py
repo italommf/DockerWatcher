@@ -6,7 +6,8 @@ from backend.services.service_manager import get_kubernetes_service
 from api.serializers.models import (
     RPASerializer, CreateRPASerializer, UpdateRPASerializer
 )
-from api.models import RPA
+from api.models import RoboDockerizado
+from django.utils import timezone
 from typing import Dict, List
 import logging
 
@@ -47,7 +48,7 @@ class RPAViewSet(viewsets.ViewSet):
         
         # Fallback: processar agora se cache não estiver disponível (primeira requisição)
         logger.debug("Cache de RPAs não disponível, processando agora...")
-        rpas_queryset = RPA.objects.all()
+        rpas_queryset = RoboDockerizado.objects.filter(tipo='rpa')
         
         # Buscar dados do cache
         execucoes_por_robo = CacheService.get_data(CacheKeys.EXECUTIONS, {}) or {}
@@ -59,10 +60,10 @@ class RPAViewSet(viewsets.ViewSet):
             rpa_data = rpa_obj.to_dict()
             
             # Obter execuções pendentes (do cache)
-            execucoes_pendentes = self._buscar_execucoes_cache(rpa_obj.nome_rpa, execucoes_por_robo)
+            execucoes_pendentes = self._buscar_execucoes_cache(rpa_obj.nome, execucoes_por_robo)
             
             # Obter jobs ativos (do cache)
-            jobs_ativos = jobs_por_rpa.get(rpa_obj.nome_rpa.lower(), 0)
+            jobs_ativos = jobs_por_rpa.get(rpa_obj.nome.lower(), 0)
             
             # Garantir que tags tenha "Exec"
             tags = rpa_data.get('tags', [])
@@ -85,7 +86,7 @@ class RPAViewSet(viewsets.ViewSet):
     def retrieve(self, request, pk=None):
         """Obtém detalhes de um RPA específico do banco de dados."""
         try:
-            rpa_obj = RPA.objects.get(nome_rpa=pk)
+            rpa_obj = RoboDockerizado.objects.get(nome=pk, tipo='rpa')
             rpa_data = rpa_obj.to_dict()
             
             # Obter informações adicionais
@@ -107,7 +108,7 @@ class RPAViewSet(viewsets.ViewSet):
             
             serializer = RPASerializer(rpa_data)
             return Response(serializer.data)
-        except RPA.DoesNotExist:
+        except RoboDockerizado.DoesNotExist:
             return Response({'error': 'RPA não encontrado'}, status=status.HTTP_404_NOT_FOUND)
     
     def create(self, request):
@@ -128,39 +129,41 @@ class RPAViewSet(viewsets.ViewSet):
         
         try:
             # Criar RPA no banco de dados
-            rpa = RPA.objects.create(
-                nome_rpa=dados['nome_rpa'],
+            rpa = RoboDockerizado.objects.create(
+                nome=dados['nome_rpa'],
+                tipo='rpa',
                 docker_tag=dados['docker_tag'],
                 qtd_max_instancias=dados['qtd_max_instancias'],
                 qtd_ram_maxima=dados['qtd_ram_maxima'],
                 utiliza_arquivos_externos=dados.get('utiliza_arquivos_externos', False),
                 tempo_maximo_de_vida=dados.get('tempo_maximo_de_vida', 600),
                 status='active',
+                ativo=True,
                 apelido=dados.get('apelido', ''),
                 tags=tags
             )
             
             # Verificar imediatamente se há execuções pendentes para este RPA e criar jobs
             try:
-                execucoes = self.db_service.obter_execucoes([rpa.nome_rpa])
-                execucoes_do_rpa = execucoes.get(rpa.nome_rpa, [])
+                execucoes = self.db_service.obter_execucoes([rpa.nome])
+                execucoes_do_rpa = execucoes.get(rpa.nome, [])
                 
                 if execucoes_do_rpa and len(execucoes_do_rpa) > 0:
-                    logger.info(f"RPA {rpa.nome_rpa} criado com {len(execucoes_do_rpa)} execuções pendentes. Criando jobs...")
+                    logger.info(f"RPA {rpa.nome} criado com {len(execucoes_do_rpa)} execuções pendentes. Criando jobs...")
                     
                     # Criar jobs imediatamente
                     self.k8s_service.create_job(
-                        nome_rpa=rpa.nome_rpa,
+                        nome_rpa=rpa.nome,
                         docker_tag=rpa.docker_tag,
                         qtd_ram_maxima=rpa.qtd_ram_maxima,
                         qtd_max_instancias=rpa.qtd_max_instancias,
                         utiliza_arquivos_externos=rpa.utiliza_arquivos_externos,
                         tempo_maximo_de_vida=rpa.tempo_maximo_de_vida
                     )
-                    logger.info(f"Job criado com sucesso para RPA {rpa.nome_rpa}")
+                    logger.info(f"Job criado com sucesso para RPA {rpa.nome}")
             except Exception as e:
                 # Não falhar a criação do RPA se houver erro ao verificar/criar jobs
-                logger.warning(f"Erro ao verificar/criar jobs para RPA recém-criado {rpa.nome_rpa}: {e}")
+                logger.warning(f"Erro ao verificar/criar jobs para RPA recém-criado {rpa.nome}: {e}")
             
             # Invalidar cache de RPAs para forçar atualização
             CacheService.update(CacheKeys.RPAS_PROCESSED, None)
@@ -178,7 +181,7 @@ class RPAViewSet(viewsets.ViewSet):
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         
         try:
-            rpa = RPA.objects.get(nome_rpa=pk)
+            rpa = RoboDockerizado.objects.get(nome=pk, tipo='rpa')
             dados = serializer.validated_data
             
             # Atualizar campos permitidos
@@ -208,7 +211,7 @@ class RPAViewSet(viewsets.ViewSet):
             CacheService.update(CacheKeys.RPAS_PROCESSED, None)
             
             return Response({'message': 'RPA atualizado com sucesso'}, status=status.HTTP_200_OK)
-        except RPA.DoesNotExist:
+        except RoboDockerizado.DoesNotExist:
             return Response({'error': 'RPA não encontrado'}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
             logger.error(f"Erro ao atualizar RPA: {e}")
@@ -217,7 +220,7 @@ class RPAViewSet(viewsets.ViewSet):
     def destroy(self, request, pk=None):
         """Deleta um RPA do banco de dados."""
         try:
-            rpa = RPA.objects.get(nome_rpa=pk)
+            rpa = RoboDockerizado.objects.get(nome=pk, tipo='rpa')
             rpa.delete()
             
             # Remover execuções deste RPA do cache (não será mais pesquisado)
@@ -227,7 +230,7 @@ class RPAViewSet(viewsets.ViewSet):
             CacheService.update(CacheKeys.RPAS_PROCESSED, None)
             
             return Response({'message': 'RPA deletado com sucesso'}, status=status.HTTP_200_OK)
-        except RPA.DoesNotExist:
+        except RoboDockerizado.DoesNotExist:
             return Response({'error': 'RPA não encontrado'}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
             logger.error(f"Erro ao deletar RPA: {e}")
@@ -235,20 +238,55 @@ class RPAViewSet(viewsets.ViewSet):
     
     @action(detail=True, methods=['post'])
     def standby(self, request, pk=None):
-        """Move um RPA para standby (atualiza status no banco)."""
+        """Move um RPA para standby e finaliza todas as instâncias rodando."""
         try:
-            rpa = RPA.objects.get(nome_rpa=pk)
+            rpa = RoboDockerizado.objects.get(nome=pk, tipo='rpa')
+            
+            # Deletar todos os jobs ativos deste RPA no Kubernetes
+            jobs_deletados = 0
+            try:
+                # Buscar jobs do cache ou do K8s
+                jobs_cache = CacheService.get_data(CacheKeys.JOBS, []) or []
+                if not jobs_cache:
+                    jobs_cache = self.k8s_service.get_jobs()
+                
+                # Filtrar jobs deste RPA
+                for job in jobs_cache:
+                    job_name = job.get('name', '')
+                    labels = job.get('labels', {})
+                    nome_robo = labels.get('nome_robo') or labels.get('nome-robo') or ''
+                    
+                    # Verificar se é deste RPA (comparar nomes normalizados)
+                    if nome_robo.lower().replace('-', '').replace('_', '') == pk.lower().replace('-', '').replace('_', ''):
+                        # Deletar job
+                        success = self.k8s_service.delete_job(job_name)
+                        if success:
+                            jobs_deletados += 1
+                            logger.info(f"Job {job_name} deletado (RPA {pk} em standby)")
+                
+                logger.info(f"{jobs_deletados} job(s) deletado(s) ao mover RPA {pk} para standby")
+            except Exception as e:
+                logger.warning(f"Erro ao deletar jobs do RPA {pk}: {e}")
+                # Continuar mesmo se falhar ao deletar jobs
+            
+            # Atualizar banco
             rpa.status = 'standby'
+            rpa.ativo = False
+            rpa.inativado_em = timezone.now()
             rpa.save()
             
             # Remover execuções deste RPA do cache (não será mais pesquisado)
             self._remover_execucoes_do_cache(pk)
             
-            # Invalidar cache de RPAs para forçar atualização
+            # Invalidar cache
             CacheService.update(CacheKeys.RPAS_PROCESSED, None)
+            CacheService.update(CacheKeys.JOBS, None)
             
-            return Response({'message': 'RPA movido para standby com sucesso'}, status=status.HTTP_200_OK)
-        except RPA.DoesNotExist:
+            return Response({
+                'message': f'RPA movido para standby. {jobs_deletados} instância(s) finalizada(s).',
+                'jobs_deletados': jobs_deletados
+            }, status=status.HTTP_200_OK)
+        except RoboDockerizado.DoesNotExist:
             return Response({'error': 'RPA não encontrado'}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
             logger.error(f"Erro ao mover RPA para standby: {e}")
@@ -258,15 +296,17 @@ class RPAViewSet(viewsets.ViewSet):
     def activate(self, request, pk=None):
         """Ativa um RPA do standby (atualiza status no banco)."""
         try:
-            rpa = RPA.objects.get(nome_rpa=pk)
+            rpa = RoboDockerizado.objects.get(nome=pk, tipo='rpa')
             rpa.status = 'active'
+            rpa.ativo = True
+            rpa.inativado_em = None
             rpa.save()
             
             # Invalidar cache de RPAs para forçar atualização
             CacheService.update(CacheKeys.RPAS_PROCESSED, None)
             
             return Response({'message': 'RPA ativado com sucesso'}, status=status.HTTP_200_OK)
-        except RPA.DoesNotExist:
+        except RoboDockerizado.DoesNotExist:
             return Response({'error': 'RPA não encontrado'}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
             logger.error(f"Erro ao ativar RPA: {e}")
@@ -322,4 +362,3 @@ class RPAViewSet(viewsets.ViewSet):
                 logger.debug(f"Execuções do RPA {nome_rpa} removidas do cache (RPA inativado)")
         except Exception as e:
             logger.debug(f"Erro ao remover execuções do cache para RPA {nome_rpa}: {e}")
-

@@ -1,6 +1,6 @@
 from rest_framework import viewsets, status
 from rest_framework.response import Response
-from backend.services.cache_service import CacheKeys, CacheService
+from services.cache_service import CacheKeys, CacheService
 from api.serializers.models import ExecutionSerializer
 import logging
 

@@ -2,8 +2,8 @@ import logging
 import threading
 import time
 from typing import Dict, List
-from backend.services.cache_service import CacheKeys, CacheService
-from backend.services.service_manager import get_kubernetes_service
+from services.cache_service import CacheKeys, CacheService
+from services.service_manager import get_kubernetes_service
 
 logger = logging.getLogger(__name__)
 

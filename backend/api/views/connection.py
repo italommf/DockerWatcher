@@ -1,8 +1,8 @@
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from rest_framework import status
-from backend.services.cache_service import CacheKeys, CacheService
-from backend.services.service_manager import (
+from services.cache_service import CacheKeys, CacheService
+from services.service_manager import (
     get_ssh_service,
     get_database_service,
     reset_services

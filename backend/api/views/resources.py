@@ -1,10 +1,10 @@
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from rest_framework import status
-from backend.services.cache_service import CacheKeys, CacheService
-from backend.services.service_manager import get_ssh_service
-from backend.services.vm_resource_service import fetch_vm_resources
-from backend.services.pod_resource_service import fetch_pod_resources
+from services.cache_service import CacheKeys, CacheService
+from services.service_manager import get_ssh_service
+from services.vm_resource_service import fetch_vm_resources
+from services.pod_resource_service import fetch_pod_resources
 import logging
 
 logger = logging.getLogger(__name__)

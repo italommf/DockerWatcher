@@ -24,9 +24,9 @@ class ApiConfig(AppConfig):
         
         # Importar aqui para evitar importação circular
         try:
-            from backend.services.service_manager import initialize_services
-            from backend.services.watcher_service import WatcherService
-            from backend.services.polling_service import PollingService
+            from services.service_manager import initialize_services
+            from services.watcher_service import WatcherService
+            from services.polling_service import PollingService
             
             def initialize_all_services():
                 """Inicializa serviços e depois inicia o watcher."""

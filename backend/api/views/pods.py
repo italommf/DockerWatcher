@@ -1,8 +1,8 @@
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from backend.services.cache_service import CacheKeys, CacheService
-from backend.services.service_manager import get_kubernetes_service
+from services.cache_service import CacheKeys, CacheService
+from services.service_manager import get_kubernetes_service
 from api.serializers.models import PodSerializer, PodLogsSerializer
 import logging
 

@@ -1,8 +1,8 @@
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from backend.services.cache_service import CacheKeys, CacheService
-from backend.services.service_manager import get_kubernetes_service
+from services.cache_service import CacheKeys, CacheService
+from services.service_manager import get_kubernetes_service
 from api.serializers.models import (
     RPASerializer, CreateRPASerializer, UpdateRPASerializer
 )
@@ -33,7 +33,7 @@ class RPAViewSet(viewsets.ViewSet):
     def db_service(self):
         """Lazy loading do Database service."""
         if self._db_service is None:
-            from backend.services.service_manager import get_database_service
+            from services.service_manager import get_database_service
             self._db_service = get_database_service()
         return self._db_service
     

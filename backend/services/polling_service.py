@@ -3,13 +3,13 @@ import threading
 import time
 from typing import Optional, Set, Dict, List
 
-from backend.services.cache_service import CacheKeys, CacheService
-from backend.services.service_manager import (
+from services.cache_service import CacheKeys, CacheService
+from services.service_manager import (
     get_database_service,
     get_kubernetes_service,
     get_ssh_service,
 )
-from backend.services.vm_resource_service import fetch_vm_resources
+from services.vm_resource_service import fetch_vm_resources
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +24,7 @@ class PollingService:
         # Usar configurações do config.ini se não fornecidas
         if vm_interval is None or db_interval is None:
             try:
-                from backend.config.ssh_config import get_backend_config
+                from config.ssh_config import get_backend_config
                 backend_config = get_backend_config()
                 if vm_interval is None:
                     vm_interval = backend_config.get('polling_interval_vm', 10)

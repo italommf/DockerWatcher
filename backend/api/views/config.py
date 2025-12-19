@@ -1,7 +1,7 @@
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from rest_framework import status
-from backend.config.ssh_config import get_config_path, load_config, get_ssh_config, get_mysql_config
+from config.ssh_config import get_config_path, load_config, get_ssh_config, get_mysql_config
 import configparser
 import os
 import logging

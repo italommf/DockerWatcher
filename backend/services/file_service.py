@@ -3,8 +3,8 @@ import yaml
 import logging
 from typing import List, Dict, Optional
 from pathlib import Path
-from backend.services.ssh_service import SSHService
-from backend.config.ssh_config import get_paths_config
+from services.ssh_service import SSHService
+from config.ssh_config import get_paths_config
 
 logger = logging.getLogger(__name__)
 
@@ -14,7 +14,7 @@ class FileService:
     def __init__(self, ssh_service=None):
         # Permitir injetar ssh_service para reutilização (usado pelo service_manager)
         if ssh_service is None:
-            from backend.services.service_manager import get_ssh_service
+            from services.service_manager import get_ssh_service
             self.ssh_service = get_ssh_service()
         else:
             self.ssh_service = ssh_service

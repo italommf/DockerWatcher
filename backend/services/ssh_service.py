@@ -3,7 +3,7 @@ import logging
 import threading
 from typing import Optional, Tuple
 from contextlib import contextmanager
-from backend.config.ssh_config import get_ssh_config
+from config.ssh_config import get_ssh_config
 
 logger = logging.getLogger(__name__)
 

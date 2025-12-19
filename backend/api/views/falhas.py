@@ -1,7 +1,7 @@
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from backend.services.service_manager import get_kubernetes_service
+from services.service_manager import get_kubernetes_service
 from api.models import FailedPod
 from api.serializers.models import PodSerializer, PodLogsSerializer
 import logging

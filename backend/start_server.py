@@ -11,7 +11,7 @@ from pathlib import Path
 
 # Configurar caminhos
 BASE_DIR = Path(__file__).resolve().parent
-# Adicionar diretório raiz do projeto (painel acima de backend/) ao path para permitir imports 'from backend...'
+# Adicionar diretório raiz do projeto (painel acima de backend/) ao path para permitir imports 'from ..'
 sys.path.insert(0, str(BASE_DIR.parent))
 # Adicionar diretório backend/ ao path para permitir imports diretos (opcional)
 sys.path.insert(0, str(BASE_DIR))
@@ -31,10 +31,10 @@ def main():
     """Inicia o servidor com todos os serviços."""
     try:
         # Importar serviços
-        from backend.services.service_manager import initialize_services
-        from backend.services.polling_service import PollingService
-        from backend.services.watcher_service import WatcherService
-        from backend.config.ssh_config import get_api_config
+        from services.service_manager import initialize_services
+        from services.polling_service import PollingService
+        from services.watcher_service import WatcherService
+        from config.ssh_config import get_api_config
         
         logger.info("=== Docker Watcher Backend - Iniciando ===")
         

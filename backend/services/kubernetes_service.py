@@ -3,7 +3,7 @@ import logging
 import re
 import time
 from typing import List, Dict, Optional
-from backend.services.ssh_service import SSHService
+from services.ssh_service import SSHService
 
 logger = logging.getLogger(__name__)
 
@@ -13,7 +13,7 @@ class KubernetesService:
     def __init__(self, ssh_service=None):
         # Permitir injetar ssh_service para reutilização (usado pelo service_manager)
         if ssh_service is None:
-            from backend.services.service_manager import get_ssh_service
+            from services.service_manager import get_ssh_service
             self.ssh_service = get_ssh_service()
         else:
             self.ssh_service = ssh_service

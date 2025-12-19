@@ -70,7 +70,7 @@ WSGI_APPLICATION = 'docker_watcher.wsgi.application'
 # - Django usa o banco 'docker_watcher' para armazenar robôs (tabela: robos_dockerizados)
 # - O banco 'bwav4' continua sendo usado pelo database_service para consultar execuções
 try:
-    from backend.config.ssh_config import get_mysql_config
+    from config.ssh_config import get_mysql_config
     mysql_config = get_mysql_config()
     
     DATABASES = {

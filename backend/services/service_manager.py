@@ -6,10 +6,10 @@ Inicializa conexões ao iniciar o aplicativo.
 import threading
 import logging
 from typing import Optional
-from backend.services.ssh_service import SSHService
-from backend.services.database_service import DatabaseService
-from backend.services.kubernetes_service import KubernetesService
-from backend.services.file_service import FileService
+from services.ssh_service import SSHService
+from services.database_service import DatabaseService
+from services.kubernetes_service import KubernetesService
+from services.file_service import FileService
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +40,7 @@ def initialize_services():
             # Verificar se o arquivo de configuração existe antes de tentar conectar
             try:
                 from pathlib import Path
-                from backend.config.ssh_config import get_config_path
+                from config.ssh_config import get_config_path
                 config_path = Path(get_config_path())
                 if not config_path.exists():
                     logger.warning("Arquivo config.ini não encontrado. Serviços não serão inicializados.")

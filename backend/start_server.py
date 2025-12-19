@@ -11,6 +11,9 @@ from pathlib import Path
 
 # Configurar caminhos
 BASE_DIR = Path(__file__).resolve().parent
+# Adicionar diretório raiz do projeto (painel acima de backend/) ao path para permitir imports 'from backend...'
+sys.path.insert(0, str(BASE_DIR.parent))
+# Adicionar diretório backend/ ao path para permitir imports diretos (opcional)
 sys.path.insert(0, str(BASE_DIR))
 
 # Configurar Django

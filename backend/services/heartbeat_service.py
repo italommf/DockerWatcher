@@ -53,16 +53,20 @@ class HeartbeatService:
                 timeout=30
             )
             if response.status_code == 200:
-                logger.debug(f"Heartbeat enviado com sucesso")
+                print(f"[HeartbeatService] OK - Heartbeat enviado com sucesso - Status: {response.status_code}")
+                logger.info(f"Heartbeat enviado com sucesso - Status: {response.status_code}")
             else:
+                print(f"[HeartbeatService] WARN - Heartbeat retornou status: {response.status_code}")
                 logger.warning(f"Heartbeat retornou status: {response.status_code}")
             return response.status_code
         except requests.exceptions.RequestException as e:
+            print(f"[HeartbeatService] ERROR - Erro ao enviar heartbeat: {e}")
             logger.error(f"Erro ao enviar heartbeat: {e}")
             return None
     
     def _loop(self):
         """Loop principal que envia heartbeat periodicamente."""
+        print(f"[HeartbeatService] Loop iniciado - Intervalo: {self.INTERVALO_SEGUNDOS}s")
         logger.info(f"HeartbeatService loop iniciado - Intervalo: {self.INTERVALO_SEGUNDOS}s")
         
         while not self._stop_event.is_set():
@@ -86,7 +90,8 @@ class HeartbeatService:
         )
         self._thread.start()
         self._running = True
-        logger.info(f"✓ HeartbeatService iniciado - URL: {self.URL}")
+        print(f"[HeartbeatService] OK - Servico iniciado - URL: {self.URL}")
+        logger.info(f"HeartbeatService iniciado - URL: {self.URL}")
     
     def stop(self):
         """Para o serviço de heartbeat."""

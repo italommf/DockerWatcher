@@ -14,6 +14,7 @@ services:
       - ../shared:/app/shared:ro
     environment:
       - PYTHONUNBUFFERED=1
+      - DOCKER_WATCHER_ENV=${DOCKER_WATCHER_ENV:-development}
     networks:
       - docker-watcher-network
 

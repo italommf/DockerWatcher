@@ -28,7 +28,7 @@ class KubernetesService:
         Returns:
             Lista de dicionários com informações dos pods
         """
-        cmd = "kubectl get pods -o json"
+        cmd = "kubectl get pods -A -o json"
         if label_selector:
             cmd += f" -l {label_selector}"
         
@@ -125,7 +125,7 @@ class KubernetesService:
     
     def get_jobs(self, label_selector: str = None) -> List[Dict]:
         """Lista jobs com informações detalhadas."""
-        cmd = "kubectl get jobs -o json"
+        cmd = "kubectl get jobs -A -o json"
         if label_selector:
             cmd += f" -l {label_selector}"
         
@@ -335,20 +335,43 @@ class KubernetesService:
             logger.error(f"Erro ao criar job: {e}")
             return False
     
-    def delete_job(self, job_name: str) -> bool:
+    def delete_job(self, job_name: str, namespace: str = None) -> bool:
         """Deleta um job Kubernetes."""
-        cmd = f"kubectl delete job {job_name}"
+        logger.info(f"[K8S] Solicitado deletar job '{job_name}' (namespace={namespace})")
         
         try:
+            # Se não foi passado namespace, tentar descobrir
+            if not namespace:
+                # Buscar namespace do job
+                find_cmd = f"kubectl get jobs -A --no-headers | grep {job_name} | head -1 | awk '{{print $1}}'"
+                ns_code, ns_stdout, ns_stderr = self.ssh_service.execute_command(find_cmd, timeout=15)
+                
+                if ns_code == 0 and ns_stdout.strip():
+                    namespace = ns_stdout.strip()
+                    logger.info(f"[K8S] Job '{job_name}' encontrado no namespace '{namespace}'")
+                else:
+                    # Job não encontrado em nenhum namespace - pode já ter sido deletado
+                    logger.warning(f"[K8S] Job '{job_name}' não encontrado em nenhum namespace. Pode já ter sido removido.")
+                    return True  # Retorna sucesso pois o objetivo (job não existir) foi atingido
+            
+            # Deletar o job com o namespace
+            cmd = f"kubectl delete job {job_name} -n {namespace}"
+            logger.info(f"[K8S] Executando: {cmd}")
+            
             return_code, stdout, stderr = self.ssh_service.execute_command(cmd, timeout=30)
             
             if return_code != 0:
-                logger.error(f"Erro ao deletar job: {stderr}")
+                # Verificar se o erro é porque o job não existe (já foi deletado)
+                if "not found" in stderr.lower() or "notfound" in stderr.lower():
+                    logger.info(f"[K8S] Job '{job_name}' já não existe (not found)")
+                    return True
+                logger.error(f"[K8S] Erro ao deletar job: {stderr}")
                 return False
             
+            logger.info(f"[K8S] Job '{job_name}' deletado com sucesso")
             return True
         except Exception as e:
-            logger.error(f"Erro ao deletar job: {e}")
+            logger.error(f"[K8S] Erro ao deletar job: {e}", exc_info=True)
             return False
     
     def delete_pod(self, pod_name: str) -> bool:
@@ -367,25 +390,59 @@ class KubernetesService:
             logger.error(f"Erro ao deletar pod: {e}")
             return False
     
-    def get_pod_logs(self, pod_name: str, tail: int = 100) -> str:
+    def get_pod_logs(self, pod_name: str, tail: int = 100, namespace: str = None) -> str:
         """Obtém logs de um pod."""
-        cmd = f"kubectl logs {pod_name} --tail={tail}"
+        logger.info(f"[K8S] Buscando logs do pod '{pod_name}' (namespace={namespace}, tail={tail})")
         
         try:
-            return_code, stdout, stderr = self.ssh_service.execute_command(cmd, timeout=30)
+            # Primeiro, buscar o namespace do pod se não foi fornecido
+            if not namespace:
+                # Usar kubectl get pods -A para encontrar o pod e seu namespace
+                find_cmd = f"kubectl get pods -A --no-headers | grep {pod_name} | head -1 | awk '{{print $1}}'"
+                ns_code, ns_stdout, ns_stderr = self.ssh_service.execute_command(find_cmd, timeout=15)
+                
+                if ns_code == 0 and ns_stdout.strip():
+                    namespace = ns_stdout.strip()
+                    logger.info(f"[K8S] Pod '{pod_name}' encontrado no namespace '{namespace}'")
+                else:
+                    # Tentar namespace default se não encontrou
+                    namespace = "default"
+                    logger.warning(f"[K8S] Pod '{pod_name}' não encontrado na listagem, tentando namespace 'default'")
+            
+            # Buscar os logs com o namespace
+            cmd = f"kubectl logs {pod_name} -n {namespace} --tail={tail}"
+            logger.info(f"[K8S] Executando: {cmd}")
+            
+            return_code, stdout, stderr = self.ssh_service.execute_command(cmd, timeout=60)
             
             if return_code != 0:
-                logger.error(f"Erro ao obter logs: {stderr}")
-                return ""
+                logger.error(f"[K8S] Erro ao obter logs (código {return_code}): {stderr}")
+                # Tentar sem especificar namespace (usa o contexto padrão)
+                cmd_fallback = f"kubectl logs {pod_name} --tail={tail}"
+                logger.info(f"[K8S] Tentando fallback sem namespace: {cmd_fallback}")
+                
+                return_code2, stdout2, stderr2 = self.ssh_service.execute_command(cmd_fallback, timeout=60)
+                
+                if return_code2 == 0 and stdout2:
+                    logger.info(f"[K8S] Logs obtidos via fallback para '{pod_name}' ({len(stdout2)} bytes)")
+                    return stdout2
+                else:
+                    return f"Erro ao obter logs do pod '{pod_name}': {stderr or stderr2}"
             
-            return stdout
+            if stdout:
+                logger.info(f"[K8S] Logs obtidos com sucesso para '{pod_name}' ({len(stdout)} bytes)")
+                return stdout
+            else:
+                logger.warning(f"[K8S] Pod '{pod_name}' não tem logs ou está vazio")
+                return "Pod sem logs disponíveis (container pode estar iniciando ou logs foram limpos)"
+                
         except Exception as e:
-            logger.error(f"Erro ao obter logs: {e}")
-            return ""
+            logger.error(f"[K8S] Erro ao obter logs: {e}", exc_info=True)
+            return f"Erro ao obter logs: {str(e)}"
     
     def get_cronjobs(self) -> List[Dict]:
         """Lista cronjobs com informações detalhadas."""
-        cmd = "kubectl get cronjobs -o json"
+        cmd = "kubectl get cronjobs -A -o json"
         
         try:
             return_code, stdout, stderr = self.ssh_service.execute_command(cmd, timeout=30)
@@ -396,9 +453,11 @@ class KubernetesService:
             
             import json
             data = json.loads(stdout)
+            items = data.get('items', [])
+            logger.info(f"[K8S] Comando 'kubectl get cronjobs -A' retornou {len(items)} cronjobs")
             cronjobs = []
             
-            for item in data.get('items', []):
+            for item in items:
                 metadata = item.get('metadata', {})
                 spec = item.get('spec', {})
                 status = item.get('status', {})
@@ -446,9 +505,10 @@ class KubernetesService:
                 
                 cronjobs.append(cronjob_info)
             
+            logger.info(f"[K8S] Processados {len(cronjobs)} cronjobs com sucesso. Nomes: {[cj.get('name') for cj in cronjobs]}")
             return cronjobs
         except Exception as e:
-            logger.error(f"Erro ao processar cronjobs: {e}")
+            logger.error(f"Erro ao processar cronjobs: {e}", exc_info=True)
             return []
     
     def cronjob_exists(self, nome: str) -> bool:
@@ -542,7 +602,7 @@ class KubernetesService:
     
     def get_deployments(self) -> List[Dict]:
         """Lista deployments com informações detalhadas."""
-        cmd = "kubectl get deployments -o json"
+        cmd = "kubectl get deployments -A -o json"
         
         try:
             return_code, stdout, stderr = self.ssh_service.execute_command(cmd, timeout=30)

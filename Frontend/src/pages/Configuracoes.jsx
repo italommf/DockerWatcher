@@ -19,7 +19,7 @@ import api, { updateApiUrl } from '../services/api'
 import { useSnackbar } from 'notistack'
 import { getApiUrl, setApiUrl, testApiConnection } from '../config/apiConfig'
 
-export default function Configuracoes() {
+export default function Configuracoes({ onConnectionChange }) {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [testingSsh, setTestingSsh] = useState(false)
@@ -56,7 +56,8 @@ export default function Configuracoes() {
   const loadConfig = async () => {
     try {
       setLoading(true)
-      const data = await api.getConfig()
+      // Usar um timeout menor para o carregamento inicial para não travar a UI
+      const data = await api.getConfig({ timeout: 5000 })
 
       if (data.ssh) {
         setSshConfig({
@@ -220,6 +221,8 @@ export default function Configuracoes() {
 
       if (result.ssh_connected) {
         enqueueSnackbar('Conexão SSH bem-sucedida!', { variant: 'success' })
+        // Atualizar status global do sidebar
+        if (onConnectionChange) onConnectionChange()
       } else {
         enqueueSnackbar(`Falha na conexão SSH: ${result.ssh_error || 'Erro desconhecido'}`, {
           variant: 'error',
@@ -342,6 +345,8 @@ export default function Configuracoes() {
 
       if (result.mysql_connected) {
         enqueueSnackbar('Conexão MySQL bem-sucedida!', { variant: 'success' })
+        // Atualizar status global do sidebar
+        if (onConnectionChange) onConnectionChange()
       } else {
         enqueueSnackbar(`Falha na conexão MySQL: ${result.mysql_error || 'Erro desconhecido'}`, {
           variant: 'error',

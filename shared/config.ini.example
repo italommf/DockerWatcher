@@ -1,0 +1,16 @@
+[ssh]
+# Configurações de SSH para acessar o cluster Kubernetes
+host = 192.168.1.100
+port = 22
+username = seu_usuario
+password = sua_senha
+
+[mysql]
+# Configurações do MySQL
+# O Django usará o banco 'docker_watcher' para armazenar robôs
+# O banco 'bwav4' (especificado abaixo) é usado para consultar execuções
+host = 192.168.1.100
+port = 3306
+user = seu_usuario_mysql
+password = sua_senha_mysql
+database = bwav4

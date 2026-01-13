@@ -129,12 +129,13 @@ function App() {
       <SnackbarProvider
         maxSnack={3}
         anchorOrigin={{
-          vertical: 'bottom',
-          horizontal: 'left',
+          vertical: 'top',
+          horizontal: 'right',
         }}
-        autoHideDuration={5000}
+        autoHideDuration={4000}
         dense={false}
         preventDuplicate={true}
+        style={{ marginTop: '10px' }}
       >
         <AppLogsProvider>
           <DashboardCacheProvider>

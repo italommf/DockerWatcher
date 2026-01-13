@@ -341,6 +341,12 @@ export default function Jobs({ isConnected = true, onReconnect }) {
   }
 
   const handleViewLogs = (job) => {
+    console.log('[JOBS] Abrindo logs para:', {
+      jobName: job.name,
+      podName: job.pod_name,
+      namespace: job.namespace,
+      status: job.status
+    })
     setSelectedJobForLogs(job)
     setLogViewerOpen(true)
   }
@@ -506,7 +512,8 @@ export default function Jobs({ isConnected = true, onReconnect }) {
           <TerminalView
             open={logViewerOpen}
             onClose={handleCloseLogViewer}
-            podName={selectedJobForLogs?.pod_name}
+            podName={selectedJobForLogs?.pod_name || selectedJobForLogs?.name}
+            namespace={selectedJobForLogs?.namespace}
           />
         </Box>
       </Paper>

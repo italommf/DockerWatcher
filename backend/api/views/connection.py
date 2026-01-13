@@ -64,12 +64,34 @@ def reload_services(request):
             'message': 'Erro ao recarregar serviços'
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+def _update_status_cache(ssh_connected=None, mysql_connected=None, ssh_error=None, mysql_error=None):
+    """Auxiliar para atualizar o cache de status global."""
+    current = CacheService.get_data(CacheKeys.CONNECTION_STATUS) or {
+        'ssh_connected': False,
+        'mysql_connected': False,
+        'ssh_error': None,
+        'mysql_error': None
+    }
+    
+    if ssh_connected is not None:
+        current['ssh_connected'] = ssh_connected
+        current['ssh_error'] = ssh_error if not ssh_connected else None
+    
+    if mysql_connected is not None:
+        current['mysql_connected'] = mysql_connected
+        current['mysql_error'] = mysql_error if not mysql_connected else None
+        
+    CacheService.update(CacheKeys.CONNECTION_STATUS, current)
+
 @api_view(['GET'])
 def mysql_status(request):
     """Testa apenas a conexão MySQL e retorna status detalhado."""
     # Usar serviço singleton para evitar reconexões constantes
     db_service = get_database_service()
     mysql_connected, mysql_error = db_service.test_connection_with_details()
+    
+    # Atualizar cache global para que o sidebar reflita a mudança imediatamente
+    _update_status_cache(mysql_connected=mysql_connected, mysql_error=mysql_error)
     
     data = {
         'mysql_connected': mysql_connected,
@@ -91,6 +113,9 @@ def ssh_status(request):
         if not ssh_connected:
             ssh_error = "Falha na conexão SSH. Verifique host, porta, usuário e senha/chave no config.ini"
         
+        # Atualizar cache global para que o sidebar reflita a mudança imediatamente
+        _update_status_cache(ssh_connected=ssh_connected, ssh_error=ssh_error)
+        
         data = {
             'ssh_connected': ssh_connected,
             'ssh_error': ssh_error,
@@ -102,6 +127,8 @@ def ssh_status(request):
         return Response(data, status=status.HTTP_200_OK)
     except Exception as e:
         logger.error(f"Erro ao testar conexão SSH: {e}")
+        # Também atualizar cache em caso de erro fatal
+        _update_status_cache(ssh_connected=False, ssh_error=str(e))
         return Response({
             'ssh_connected': False,
             'ssh_error': f"Erro ao testar conexão: {str(e)}",

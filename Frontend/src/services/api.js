@@ -127,13 +127,13 @@ export default {
     return response.data
   },
 
-  async testSshConnection() {
-    const response = await apiConnection.get('/api/connection/ssh/')
+  async testSshConnection(config = {}) {
+    const response = await apiConnection.get('/api/connection/ssh/', config)
     return response.data
   },
 
-  async testMysqlConnection() {
-    const response = await apiConnection.get('/api/connection/mysql/')
+  async testMysqlConnection(config = {}) {
+    const response = await apiConnection.get('/api/connection/mysql/', config)
     return response.data
   },
 
@@ -210,8 +210,12 @@ export default {
     return response.data
   },
 
-  async getPodLogs(podName, tail = 100) {
-    const response = await api.get(`/api/pods/${podName}/logs/`, { params: { tail } })
+  async getPodLogs(podName, tail = 100, namespace = null) {
+    const params = { tail }
+    if (namespace) {
+      params.namespace = namespace
+    }
+    const response = await api.get(`/api/pods/${podName}/logs/`, { params })
     return response.data
   },
 
@@ -317,8 +321,8 @@ export default {
   },
 
   // Config
-  async getConfig() {
-    const response = await api.get('/api/config/')
+  async getConfig(options = {}) {
+    const response = await api.get('/api/config/', options)
     return response.data
   },
 
@@ -335,6 +339,17 @@ export default {
 
   async getPodResources() {
     const response = await api.get('/api/resources/pods/')
+    return response.data
+  },
+
+  // Dashboard Consolidado
+  async getDashboardFull() {
+    const response = await api.get('/api/dashboard/full/')
+    return response.data
+  },
+
+  async getCacheStats() {
+    const response = await api.get('/api/dashboard/cache-stats/')
     return response.data
   },
 }

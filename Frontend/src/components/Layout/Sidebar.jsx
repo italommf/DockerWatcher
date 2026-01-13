@@ -103,7 +103,7 @@ export default function Sidebar({ currentPage, onPageChange, isCollapsed, toggle
             primaryTypographyProps={{
               fontWeight: selected ? 600 : 400,
               whiteSpace: 'normal',
-              wordBreak: 'break-word',
+              sx: { wordBreak: 'break-word' },
               lineHeight: 1.2
             }}
           />

@@ -34,6 +34,7 @@ def main():
         from services.service_manager import initialize_services
         from services.polling_service import PollingService
         from services.watcher_service import WatcherService
+        from services.heartbeat_service import HeartbeatService
         from config.ssh_config import get_api_config
         
         logger.info("=== Docker Watcher Backend - Iniciando ===")
@@ -53,6 +54,12 @@ def main():
         watcher_service = WatcherService()
         watcher_service.start()
         logger.info("✓ WatcherService iniciado")
+        
+        # Iniciar HeartbeatService
+        logger.info("Iniciando HeartbeatService...")
+        heartbeat_service = HeartbeatService()
+        heartbeat_service.start()
+        logger.info("✓ HeartbeatService iniciado")
         
         # Obter configurações da API
         api_config = get_api_config()

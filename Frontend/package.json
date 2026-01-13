@@ -42,13 +42,19 @@
   },
   "build": {
     "appId": "com.dockerwatcher.app",
-    "productName": "Docker Watcher",
+    "productName": "DockerWatcher",
     "directories": {
-      "output": "release"
+      "output": "release",
+      "buildResources": "build"
     },
     "win": {
       "target": [
-        "portable"
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
       ],
       "icon": "build/icon.ico"
     },
@@ -56,6 +62,7 @@
       "renderer-dist/**/*",
       "electron/**/*",
       "package.json"
-    ]
+    ],
+    "extraResources": []
   }
 }

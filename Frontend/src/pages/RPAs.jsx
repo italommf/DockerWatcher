@@ -196,7 +196,7 @@ export default function RPAs({ isConnected = true, onReconnect, onEdit }) {
   const [rpas, setRPAs] = useState([])
   const [searchTerm, setSearchTerm] = useState('')
   const { enqueueSnackbar } = useSnackbar()
-  const { cachedData, loadDashboardData } = useDashboardCache()
+  const { cachedData, refreshData } = useDashboardCache()
   const [loading, setLoading] = useState(true)
 
   // Filtrar RPAs baseado no termo de pesquisa
@@ -214,10 +214,8 @@ export default function RPAs({ isConnected = true, onReconnect, onEdit }) {
 
   useEffect(() => {
     // Sempre que o cache for atualizado, refletir instantaneamente
-    // Garantir que rpas é sempre um array válido
-    const rpasArray = (cachedData?.rpas && Array.isArray(cachedData.rpas)) ? cachedData.rpas : []
-    setRPAs(rpasArray)
-    if (cachedData?.rpas !== undefined) {
+    if (cachedData?.rpas !== null && cachedData?.rpas !== undefined) {
+      setRPAs(cachedData.rpas)
       setLoading(false)
     }
   }, [cachedData?.rpas])
@@ -229,13 +227,16 @@ export default function RPAs({ isConnected = true, onReconnect, onEdit }) {
     }
 
     // Se ainda não temos dados no cache, solicitar atualização (não bloqueia UI)
-    if (!cachedData?.rpas || cachedData.rpas.length === 0) {
-      loadDashboardData(true).catch((error) => {
+    if (cachedData?.rpas === null) {
+      refreshData(isConnected, true).catch((error) => {
         console.error('Erro ao carregar RPAs:', error)
         enqueueSnackbar(`Erro ao carregar RPAs: ${error.message}`, { variant: 'error' })
+        setLoading(false)
       })
+    } else {
+      setLoading(false)
     }
-  }, [isConnected])
+  }, [isConnected, cachedData?.rpas])
 
   const handleToggleStandby = async (rpa) => {
     // Atualização otimista: atualizar UI imediatamente
@@ -301,7 +302,7 @@ export default function RPAs({ isConnected = true, onReconnect, onEdit }) {
     try {
       await api.deleteRPA(rpa.nome_rpa)
       enqueueSnackbar('RPA deletado com sucesso', { variant: 'success' })
-      await loadDashboardData(true)
+      await refreshData(isConnected, true)
     } catch (error) {
       enqueueSnackbar(`Erro: ${error.message}`, { variant: 'error' })
     }

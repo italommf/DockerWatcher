@@ -38,70 +38,159 @@ function calcularProximaExecucao(schedule) {
     // Parsear cron expression (formato: minuto hora dia mês dia-da-semana)
     // Exemplo: "0 18 1 * *" = todo dia 1 às 18:00
     const parts = schedule.trim().split(/\s+/)
-    if (parts.length < 5) return null
+    if (parts.length < 5) {
+      console.warn('[CALCULAR] Schedule inválido (menos de 5 partes):', schedule)
+      return null
+    }
 
     const now = new Date()
     const [minuto, hora, dia, mes, diaSemana] = parts
 
-    // Criar data para próxima execução (começar de hoje)
+    // Função auxiliar para parsear valores de cron (intervalos, ranges, listas)
+    const parseCronValue = (value, max) => {
+      if (value === '*') return { type: 'any' }
+      if (value.includes('/')) {
+        const [base, step] = value.split('/')
+        const stepNum = parseInt(step)
+        if (isNaN(stepNum)) return null
+        return { type: 'interval', step: stepNum }
+      }
+      if (value.includes('-')) {
+        const [start, end] = value.split('-').map(v => parseInt(v))
+        if (isNaN(start) || isNaN(end)) return null
+        return { type: 'range', start, end }
+      }
+      if (value.includes(',')) {
+        const values = value.split(',').map(v => parseInt(v)).filter(v => !isNaN(v))
+        return values.length > 0 ? { type: 'list', values } : null
+      }
+      const num = parseInt(value)
+      return isNaN(num) ? null : { type: 'single', value: num }
+    }
+
+    // Criar data para próxima execução (começar de agora)
     let proxima = new Date(now)
     proxima.setSeconds(0)
     proxima.setMilliseconds(0)
 
-    // Se minuto e hora são específicos
-    if (minuto !== '*' && hora !== '*') {
-      const minutoInt = parseInt(minuto) || 0
-      const horaInt = parseInt(hora) || 0
+    const minutoParsed = parseCronValue(minuto, 59)
+    const horaParsed = parseCronValue(hora, 23)
+    const diaParsed = parseCronValue(dia, 31)
 
-      proxima.setMinutes(minutoInt)
-      proxima.setHours(horaInt)
+    // Caso simples: valores únicos para minuto e hora
+    if (minutoParsed?.type === 'single' && horaParsed?.type === 'single') {
+      proxima.setMinutes(minutoParsed.value)
+      proxima.setHours(horaParsed.value)
 
-      // Se já passou hoje, tentar amanhã
       if (proxima <= now) {
         proxima.setDate(proxima.getDate() + 1)
       }
 
-      // Se dia do mês é específico
-      if (dia !== '*') {
-        const diaMes = parseInt(dia)
-        if (!isNaN(diaMes)) {
-          // Ajustar para o dia específico do mês
-          const hoje = now.getDate()
-          if (diaMes >= hoje) {
-            // Se o dia ainda não passou este mês
-            proxima.setDate(diaMes)
-            if (proxima <= now) {
-              // Se já passou, ir para o próximo mês
-              proxima.setMonth(proxima.getMonth() + 1)
-              // Ajustar para o dia correto (pode precisar ajustar se o mês não tem esse dia)
-              const ultimoDiaMes = new Date(proxima.getFullYear(), proxima.getMonth() + 1, 0).getDate()
-              proxima.setDate(Math.min(diaMes, ultimoDiaMes))
-            }
-          } else {
-            // Se o dia já passou, ir para o próximo mês
+      if (diaParsed?.type === 'single') {
+        const diaMes = diaParsed.value
+        const hoje = now.getDate()
+        if (diaMes >= hoje) {
+          proxima.setDate(diaMes)
+          if (proxima <= now) {
             proxima.setMonth(proxima.getMonth() + 1)
             const ultimoDiaMes = new Date(proxima.getFullYear(), proxima.getMonth() + 1, 0).getDate()
             proxima.setDate(Math.min(diaMes, ultimoDiaMes))
-            proxima.setHours(horaInt)
-            proxima.setMinutes(minutoInt)
           }
+        } else {
+          proxima.setMonth(proxima.getMonth() + 1)
+          const ultimoDiaMes = new Date(proxima.getFullYear(), proxima.getMonth() + 1, 0).getDate()
+          proxima.setDate(Math.min(diaMes, ultimoDiaMes))
+          proxima.setHours(horaParsed.value)
+          proxima.setMinutes(minutoParsed.value)
         }
       }
 
-      // Verificar se ainda está no passado (caso de ajustes de mês)
       if (proxima <= now) {
-        // Se ainda está no passado, adicionar mais um dia
         proxima.setDate(proxima.getDate() + 1)
       }
-    } else {
-      // Para schedules mais complexos ou com wildcards, usar uma aproximação
-      // Adicionar 1 hora como fallback
-      proxima = new Date(now.getTime() + 60 * 60 * 1000)
+
+      return proxima
     }
 
+    // Caso com intervalos: */30 (a cada 30 minutos)
+    if (minutoParsed?.type === 'interval') {
+      const step = minutoParsed.step
+      const minutoAtual = now.getMinutes()
+      const proximoMinuto = Math.ceil((minutoAtual + 1) / step) * step
+      
+      if (proximoMinuto < 60) {
+        proxima.setMinutes(proximoMinuto)
+        proxima.setHours(now.getHours())
+      } else {
+        proxima.setMinutes(0)
+        proxima.setHours(now.getHours() + 1)
+      }
+
+      // Aplicar range de horas se existir (ex: 7-19)
+      if (horaParsed?.type === 'range') {
+        const horaAtual = proxima.getHours()
+        if (horaAtual < horaParsed.start) {
+          proxima.setHours(horaParsed.start)
+          proxima.setMinutes(0)
+        } else if (horaAtual > horaParsed.end) {
+          proxima.setDate(proxima.getDate() + 1)
+          proxima.setHours(horaParsed.start)
+          proxima.setMinutes(0)
+        }
+      }
+
+      if (proxima <= now) {
+        proxima.setMinutes(proxima.getMinutes() + step)
+        if (proxima.getMinutes() >= 60) {
+          proxima.setHours(proxima.getHours() + 1)
+          proxima.setMinutes(proxima.getMinutes() % 60)
+        }
+      }
+
+      return proxima
+    }
+
+    // Caso com lista: 0,30 (nos minutos 0 e 30)
+    if (minutoParsed?.type === 'list') {
+      const minutoAtual = now.getMinutes()
+      const proximoMinutoValido = minutoParsed.values.find(m => m > minutoAtual) || minutoParsed.values[0]
+      
+      if (proximoMinutoValido > minutoAtual) {
+        proxima.setMinutes(proximoMinutoValido)
+        proxima.setHours(now.getHours())
+      } else {
+        proxima.setMinutes(minutoParsed.values[0])
+        proxima.setHours(now.getHours() + 1)
+      }
+
+      // Aplicar range de horas se existir (ex: 6-18)
+      if (horaParsed?.type === 'range') {
+        const horaAtual = proxima.getHours()
+        if (horaAtual < horaParsed.start) {
+          proxima.setHours(horaParsed.start)
+          proxima.setMinutes(minutoParsed.values[0])
+        } else if (horaAtual > horaParsed.end) {
+          proxima.setDate(proxima.getDate() + 1)
+          proxima.setHours(horaParsed.start)
+          proxima.setMinutes(minutoParsed.values[0])
+        }
+      }
+
+      if (proxima <= now) {
+        proxima.setMinutes(minutoParsed.values[0])
+        proxima.setHours(proxima.getHours() + 1)
+      }
+
+      return proxima
+    }
+
+    // Fallback: para schedules muito complexos, usar aproximação
+    console.warn('[CALCULAR] Schedule complexo não totalmente suportado, usando aproximação:', schedule)
+    proxima = new Date(now.getTime() + 60 * 60 * 1000) // 1 hora a partir de agora
     return proxima
+
   } catch (e) {
-    console.error('Erro ao calcular próxima execução:', e, schedule)
+    console.error('[CALCULAR] Erro ao calcular próxima execução:', e, schedule)
     return null
   }
 }
@@ -606,16 +695,19 @@ export default function Dashboard({ isConnected = true, onReconnect }) {
   const [connectionError, setConnectionError] = useState(false)
   const [expandedPanel, setExpandedPanel] = useState('left')
 
-  // Usar dados do cache
-  const stats = cachedData.stats
-  const robots = cachedData.robots
-  const cronjobs = cachedData.cronjobs
+  // Usar dados do cache com fallbacks seguros (evita crashes durante o carregamento inicial quando são null)
+  const stats = cachedData.stats || {}
+  const robots = cachedData.robots || []
+  const cronjobs = cachedData.cronjobs || []
+  const rpas = cachedData.rpas || []
+  const deployments = cachedData.deployments || []
+
   const vmResources = cachedData.vmResources || {
     memoria: { total_gb: 0, livre_gb: 0, usada_gb: 0 },
     armazenamento: { total_gb: 0, livre_gb: 0, usado_gb: 0 },
     cpu: { usado: 0, livre: 100 }
   }
-  const resourcesHistory = cachedData.resourcesHistory
+  const resourcesHistory = cachedData.resourcesHistory || { memoria: [], armazenamento: [], cpu: [] }
 
   const countdownIntervalRef = useRef(null)
   const { enqueueSnackbar } = useSnackbar()
@@ -639,7 +731,7 @@ export default function Dashboard({ isConnected = true, onReconnect }) {
     if (isConnected && !hasLoadedRef.current) {
       // Forçar atualização inicial ao conectar (apenas uma vez)
       console.log('[DASHBOARD] Carregando dados iniciais')
-      refreshData(isConnected)
+      refreshData(isConnected, true)
       hasLoadedRef.current = true
       setLoading(false)
       setConnectionError(false)
@@ -670,7 +762,7 @@ export default function Dashboard({ isConnected = true, onReconnect }) {
       setConnectionError(false)
 
       // Usar refreshData do contexto que já atualiza o cache
-      await refreshData(isConnected)
+      await refreshData(isConnected, true)
     } catch (error) {
       console.error('Erro ao carregar dashboard:', error)
 
@@ -700,11 +792,11 @@ export default function Dashboard({ isConnected = true, onReconnect }) {
       // Aguardar um pouco e tentar recarregar
       setTimeout(() => {
         if (isConnected) {
-          refreshData(isConnected)
+          refreshData(isConnected, true)
         }
       }, 2000)
     } else {
-      refreshData(isConnected)
+      refreshData(isConnected, true)
     }
   }
 
@@ -712,7 +804,7 @@ export default function Dashboard({ isConnected = true, onReconnect }) {
   useEffect(() => {
     if (isConnected && connectionError) {
       setConnectionError(false)
-      refreshData(isConnected)
+      refreshData(isConnected, true)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isConnected, connectionError])
@@ -1005,14 +1097,23 @@ export default function Dashboard({ isConnected = true, onReconnect }) {
                 </TableRow>
               </TableHead>
               <TableBody>
-                {cronjobs.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={5} align="center" sx={{ color: '#FFFFFF' }}>
-                      Nenhum cronjob agendado
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  cronjobs.map((cronjob) => {
+                {(() => {
+                  // Debug: log dos cronjobs recebidos
+                  console.log('[DASHBOARD] Cronjobs para exibir:', cronjobs.length, cronjobs.map(cj => ({
+                    name: cj.name,
+                    schedule: cj.schedule,
+                    proximaExecucao: cj.proximaExecucao,
+                    suspended: cj.suspended
+                  })))
+                  
+                  return cronjobs.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={5} align="center" sx={{ color: '#FFFFFF' }}>
+                        Nenhum cronjob agendado
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    cronjobs.map((cronjob) => {
                     const proximaExecucao = cronjob.proximaExecucao
                     const horarioFormatado = proximaExecucao
                       ? proximaExecucao.toLocaleString('pt-BR', {
@@ -1047,13 +1148,13 @@ export default function Dashboard({ isConnected = true, onReconnect }) {
                           {formatarNome(cronjob.name) || 'N/A'}
                         </TableCell>
                         <TableCell sx={{ color: '#FFFFFF', py: 1.5 }}>
-                          {horarioFormatado}
+                          {cronjob.schedule || 'N/A'}
                         </TableCell>
                         <TableCell sx={{ color: '#FFFFFF', py: 1.5 }}>
                           {proximaExecucao ? (
                             <ContagemRegressiva dataFutura={proximaExecucao} />
                           ) : (
-                            'N/A'
+                            'Agendado'
                           )}
                         </TableCell>
                         <TableCell sx={{ color: '#FFFFFF', py: 1.5 }}>
@@ -1098,7 +1199,8 @@ export default function Dashboard({ isConnected = true, onReconnect }) {
                       </TableRow>
                     )
                   })
-                )}
+                  )
+                })()}
               </TableBody>
             </Table>
           </TableContainer>

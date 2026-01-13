@@ -76,7 +76,7 @@ try:
     DATABASES = {
         'default': {
             'ENGINE': 'django.db.backends.mysql',
-            'NAME': 'docker_watcher',  # Banco para armazenar robôs dockerizados
+            'NAME': mysql_config.get('database', 'docker_watcher'),  # Usa banco do config.ini ou fallback
             'USER': mysql_config['user'],
             'PASSWORD': mysql_config['password'],
             'HOST': mysql_config['host'],

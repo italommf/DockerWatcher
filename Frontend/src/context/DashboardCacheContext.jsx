@@ -14,10 +14,11 @@ export const useDashboardCache = () => {
 export const DashboardCacheProvider = ({ children }) => {
   // Estados para cache dos dados
   const [cachedData, setCachedData] = useState({
-    rpas: [],
-    jobsStatus: {},
-    cronjobs: [],
-    deployments: [],
+    rpas: null,
+    cronjobs: null,
+    deployments: null,
+    failedPods: null,
+    executions: null,
     robots: [],
     stats: {
       instanciasAtivas: 0,
@@ -25,6 +26,7 @@ export const DashboardCacheProvider = ({ children }) => {
       falhasContainers: 0,
       rpasAtivos: 0,
       cronjobsAtivos: 0,
+      deploymentsAtivos: 0,
     },
     vmResources: null,
     resourcesHistory: {
@@ -47,57 +49,156 @@ export const DashboardCacheProvider = ({ children }) => {
 
     try {
       const parts = schedule.trim().split(/\s+/)
-      if (parts.length < 5) return null
+      if (parts.length < 5) {
+        console.warn('[CALCULAR] Schedule inválido (menos de 5 partes):', schedule)
+        return null
+      }
 
       const now = new Date()
       const [minuto, hora, dia, mes, diaSemana] = parts
+
+      // Função auxiliar para parsear valores de cron (intervalos, ranges, listas)
+      const parseCronValue = (value, max) => {
+        if (value === '*') return { type: 'any' }
+        if (value.includes('/')) {
+          const [base, step] = value.split('/')
+          const stepNum = parseInt(step)
+          if (isNaN(stepNum)) return null
+          return { type: 'interval', step: stepNum }
+        }
+        if (value.includes('-')) {
+          const [start, end] = value.split('-').map(v => parseInt(v))
+          if (isNaN(start) || isNaN(end)) return null
+          return { type: 'range', start, end }
+        }
+        if (value.includes(',')) {
+          const values = value.split(',').map(v => parseInt(v)).filter(v => !isNaN(v))
+          return values.length > 0 ? { type: 'list', values } : null
+        }
+        const num = parseInt(value)
+        return isNaN(num) ? null : { type: 'single', value: num }
+      }
 
       let proxima = new Date(now)
       proxima.setSeconds(0)
       proxima.setMilliseconds(0)
 
-      if (minuto !== '*' && hora !== '*') {
-        const minutoInt = parseInt(minuto) || 0
-        const horaInt = parseInt(hora) || 0
+      const minutoParsed = parseCronValue(minuto, 59)
+      const horaParsed = parseCronValue(hora, 23)
+      const diaParsed = parseCronValue(dia, 31)
 
-        proxima.setMinutes(minutoInt)
-        proxima.setHours(horaInt)
+      // Caso simples: valores únicos
+      if (minutoParsed?.type === 'single' && horaParsed?.type === 'single') {
+        proxima.setMinutes(minutoParsed.value)
+        proxima.setHours(horaParsed.value)
 
         if (proxima <= now) {
           proxima.setDate(proxima.getDate() + 1)
         }
 
-        if (dia !== '*') {
-          const diaMes = parseInt(dia)
-          if (!isNaN(diaMes)) {
-            const hoje = now.getDate()
-            if (diaMes >= hoje) {
-              proxima.setDate(diaMes)
-              if (proxima <= now) {
-                proxima.setMonth(proxima.getMonth() + 1)
-                const ultimoDiaMes = new Date(proxima.getFullYear(), proxima.getMonth() + 1, 0).getDate()
-                proxima.setDate(Math.min(diaMes, ultimoDiaMes))
-              }
-            } else {
+        if (diaParsed?.type === 'single') {
+          const diaMes = diaParsed.value
+          const hoje = now.getDate()
+          if (diaMes >= hoje) {
+            proxima.setDate(diaMes)
+            if (proxima <= now) {
               proxima.setMonth(proxima.getMonth() + 1)
               const ultimoDiaMes = new Date(proxima.getFullYear(), proxima.getMonth() + 1, 0).getDate()
               proxima.setDate(Math.min(diaMes, ultimoDiaMes))
-              proxima.setHours(horaInt)
-              proxima.setMinutes(minutoInt)
             }
+          } else {
+            proxima.setMonth(proxima.getMonth() + 1)
+            const ultimoDiaMes = new Date(proxima.getFullYear(), proxima.getMonth() + 1, 0).getDate()
+            proxima.setDate(Math.min(diaMes, ultimoDiaMes))
+            proxima.setHours(horaParsed.value)
+            proxima.setMinutes(minutoParsed.value)
           }
         }
 
         if (proxima <= now) {
           proxima.setDate(proxima.getDate() + 1)
         }
-      } else {
-        proxima = new Date(now.getTime() + 60 * 60 * 1000)
+
+        return proxima
       }
 
+      // Caso com intervalos: */30
+      if (minutoParsed?.type === 'interval') {
+        const step = minutoParsed.step
+        const minutoAtual = now.getMinutes()
+        const proximoMinuto = Math.ceil((minutoAtual + 1) / step) * step
+        
+        if (proximoMinuto < 60) {
+          proxima.setMinutes(proximoMinuto)
+          proxima.setHours(now.getHours())
+        } else {
+          proxima.setMinutes(0)
+          proxima.setHours(now.getHours() + 1)
+        }
+
+        if (horaParsed?.type === 'range') {
+          const horaAtual = proxima.getHours()
+          if (horaAtual < horaParsed.start) {
+            proxima.setHours(horaParsed.start)
+            proxima.setMinutes(0)
+          } else if (horaAtual > horaParsed.end) {
+            proxima.setDate(proxima.getDate() + 1)
+            proxima.setHours(horaParsed.start)
+            proxima.setMinutes(0)
+          }
+        }
+
+        if (proxima <= now) {
+          proxima.setMinutes(proxima.getMinutes() + step)
+          if (proxima.getMinutes() >= 60) {
+            proxima.setHours(proxima.getHours() + 1)
+            proxima.setMinutes(proxima.getMinutes() % 60)
+          }
+        }
+
+        return proxima
+      }
+
+      // Caso com lista: 0,30
+      if (minutoParsed?.type === 'list') {
+        const minutoAtual = now.getMinutes()
+        const proximoMinutoValido = minutoParsed.values.find(m => m > minutoAtual) || minutoParsed.values[0]
+        
+        if (proximoMinutoValido > minutoAtual) {
+          proxima.setMinutes(proximoMinutoValido)
+          proxima.setHours(now.getHours())
+        } else {
+          proxima.setMinutes(minutoParsed.values[0])
+          proxima.setHours(now.getHours() + 1)
+        }
+
+        if (horaParsed?.type === 'range') {
+          const horaAtual = proxima.getHours()
+          if (horaAtual < horaParsed.start) {
+            proxima.setHours(horaParsed.start)
+            proxima.setMinutes(minutoParsed.values[0])
+          } else if (horaAtual > horaParsed.end) {
+            proxima.setDate(proxima.getDate() + 1)
+            proxima.setHours(horaParsed.start)
+            proxima.setMinutes(minutoParsed.values[0])
+          }
+        }
+
+        if (proxima <= now) {
+          proxima.setMinutes(minutoParsed.values[0])
+          proxima.setHours(proxima.getHours() + 1)
+        }
+
+        return proxima
+      }
+
+      // Fallback
+      console.warn('[CALCULAR] Schedule complexo não totalmente suportado, usando aproximação:', schedule)
+      proxima = new Date(now.getTime() + 60 * 60 * 1000)
       return proxima
+
     } catch (e) {
-      console.error('Erro ao calcular próxima execução:', e, schedule)
+      console.error('[CALCULAR] Erro ao calcular próxima execução:', e, schedule)
       return null
     }
   }
@@ -129,10 +230,10 @@ export const DashboardCacheProvider = ({ children }) => {
   const loadDashboardData = async (isConnected) => {
     if (!isConnected) return
 
-    // Throttle: não permitir requisições mais frequentes que 5 segundos
+    // Throttle: não permitir requisições mais frequentes que 3 segundos, a menos que seja forçado
     const now = Date.now()
     const timeSinceLastLoad = now - lastDashboardLoadRef.current
-    if (timeSinceLastLoad < 5000) {
+    if (timeSinceLastLoad < 3000) {
       console.log(`[DASHBOARD] Throttle ativo - última requisição há ${timeSinceLastLoad}ms, ignorando`)
       return
     }
@@ -524,9 +625,164 @@ export const DashboardCacheProvider = ({ children }) => {
     }
   }
 
+  // NOVO: Função otimizada que usa endpoint consolidado (5 chamadas -> 1)
+  const loadDashboardDataFast = async (isConnected, force = false) => {
+    if (!isConnected) return
+
+    // Throttle: não permitir requisições mais frequentes que 3 segundos, a menos que seja forçado
+    const now = Date.now()
+    const timeSinceLastLoad = now - lastDashboardLoadRef.current
+    if (!force && timeSinceLastLoad < 3000) {
+      console.log(`[DASHBOARD-FAST] Throttle ativo - última requisição há ${timeSinceLastLoad}ms, ignorando`)
+      return
+    }
+
+    // Evitar requisições duplicadas simultâneas
+    if (dashboardLoadingRef.current) {
+      console.log('[DASHBOARD-FAST] Requisição já em andamento, ignorando duplicata')
+      return
+    }
+
+    dashboardLoadingRef.current = true
+    lastDashboardLoadRef.current = now
+    const requestId = `FAST-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+    const startTime = Date.now()
+
+    try {
+      console.log(`[${requestId}] Iniciando carregamento via endpoint consolidado`)
+
+      // UMA ÚNICA CHAMADA em vez de 4-5 paralelas
+      const dashboardData = await api.getDashboardFull()
+
+      const elapsed = Date.now() - startTime
+      console.log(`[${requestId}] Dashboard consolidado carregado em ${elapsed}ms`)
+
+      // Extrair dados da resposta consolidada
+      const {
+        vm_resources: vmResources,
+        stats,
+        robots_running: robotsRunning,
+        cronjobs_proximos: cronjobsProximos,
+        cache_stats: cacheStats
+      } = dashboardData
+
+      // Mapear robôs rodando para o formato esperado pelo frontend
+      const robotsList = (robotsRunning || []).map(robot => ({
+        nome: robot.nome || robot.nome_rpa,
+        instancias: robot.instancias || 0,
+        status: 'Running',
+        statusColor: 'success',
+        execucoes: robot.execucoes_pendentes || 0,
+        tipo: robot.tipo || 'RPA',
+      }))
+
+      // Mapear cronjobs para o formato com proximaExecucao (lista completa)
+      // Usar full_data.cronjobs preferencialmente por ser a lista completa
+      console.log(`[${requestId}] DEBUG - dashboardData recebido:`, {
+        hasFullData: !!dashboardData.full_data,
+        hasCronjobsInFullData: !!dashboardData.full_data?.cronjobs,
+        cronjobsInFullData: dashboardData.full_data?.cronjobs?.length || 0,
+        hasCronjobsProximos: !!dashboardData.cronjobs_proximos,
+        cronjobsProximos: dashboardData.cronjobs_proximos?.length || 0,
+        fullDataKeys: dashboardData.full_data ? Object.keys(dashboardData.full_data) : []
+      })
+      
+      const cronjobsList = dashboardData.full_data?.cronjobs || dashboardData.cronjobs_proximos || []
+      console.log(`[${requestId}] Cronjobs recebidos do backend: ${cronjobsList.length}`, cronjobsList.map(cj => ({ 
+        name: cj.name, 
+        schedule: cj.schedule, 
+        suspended: cj.suspended,
+        hasSchedule: !!cj.schedule
+      })))
+      
+      // NÃO filtrar por proximaExecucao - mostrar TODOS os cronjobs não suspensos
+      // Mesmo que não consiga calcular a próxima execução, deve aparecer
+      const cronjobsCompleto = cronjobsList
+        .filter(cj => !cj.suspended) // Filtrar apenas os não suspensos
+        .map(cj => {
+          const proximaExecucao = calcularProximaExecucao(cj.schedule)
+          return {
+            ...cj,
+            proximaExecucao: proximaExecucao || new Date(Date.now() + 3600000) // Fallback: 1 hora se não conseguir calcular
+          }
+        })
+        .sort((a, b) => {
+          // Ordenar por próxima execução (mais próximo primeiro)
+          if (!a.proximaExecucao && !b.proximaExecucao) return 0
+          if (!a.proximaExecucao) return 1
+          if (!b.proximaExecucao) return -1
+          return a.proximaExecucao.getTime() - b.proximaExecucao.getTime()
+        })
+        .slice(0, 10) // Top 10 próximos
+
+      console.log(`[${requestId}] Processando ${cronjobsCompleto.length} cronjobs válidos para o cache (após filtrar suspensos)`)
+
+      // Atualizar cache com dados consolidados
+      setCachedData(prev => {
+        const newData = {
+          ...prev,
+          rpas: dashboardData.full_data?.rpas || prev.rpas,
+          cronjobs: cronjobsCompleto.length > 0 ? cronjobsCompleto : prev.cronjobs,
+          deployments: dashboardData.full_data?.deployments || prev.deployments,
+          failedPods: dashboardData.full_data?.failed_pods || prev.failedPods || [],
+          executions: dashboardData.full_data?.executions || prev.executions || [],
+          robots: robotsList.length > 0 ? robotsList : prev.robots,
+          vmResources: vmResources || prev.vmResources,
+          stats: {
+            instanciasAtivas: stats?.instancias_ativas ?? prev.stats?.instanciasAtivas ?? 0,
+            execucoesPendentes: stats?.execucoes_pendentes ?? prev.stats?.execucoesPendentes ?? 0,
+            falhasContainers: stats?.falhas_containers ?? prev.stats?.falhasContainers ?? 0,
+            rpasAtivos: stats?.rpas_ativos ?? prev.stats?.rpasAtivos ?? 0,
+            cronjobsAtivos: stats?.cronjobs_ativos ?? prev.stats?.cronjobsAtivos ?? 0,
+            deploymentsAtivos: stats?.deployments_ativos ?? prev.stats?.deploymentsAtivos ?? 0,
+          },
+        }
+
+        // Atualizar histórico de recursos se houver novos dados
+        if (vmResources) {
+          newData.resourcesHistory = {
+            ...prev.resourcesHistory,
+            memoria: vmResources.memoria ? [...(prev.resourcesHistory?.memoria || []).slice(-29), {
+              time: new Date(),
+              usado: vmResources.memoria.usada_gb || 0,
+              livre: vmResources.memoria.livre_gb || 0
+            }] : prev.resourcesHistory?.memoria || [],
+            cpu: vmResources.cpu ? [...(prev.resourcesHistory?.cpu || []).slice(-29), {
+              time: new Date(),
+              usado: vmResources.cpu.usado || 0,
+              livre: vmResources.cpu.livre || 100
+            }] : prev.resourcesHistory?.cpu || [],
+          }
+        }
+
+        return newData
+      })
+
+      console.log(`[${requestId}] Cache atualizado via endpoint consolidado`)
+
+    } catch (error) {
+      console.error(`[${requestId}] Erro no endpoint consolidado:`, error.message)
+      // Se falhar e rpas for null (primeira carga), mudar para [] para tirar loading
+      setCachedData(prev => ({
+        ...prev,
+        rpas: prev.rpas === null ? [] : prev.rpas,
+        cronjobs: prev.cronjobs === null ? [] : prev.cronjobs,
+        deployments: prev.deployments === null ? [] : prev.deployments,
+      }))
+
+      // Tentar fallback se não for um erro de conexão completa
+      if (isConnected) {
+        await loadDashboardData(isConnected)
+      }
+    } finally {
+      dashboardLoadingRef.current = false
+    }
+  }
+
   // Ref para evitar requisições duplicadas simultâneas
   const vmResourcesLoadingRef = useRef(false)
   const lastVMResourcesLoadRef = useRef(0)
+
 
   // Função para carregar recursos da VM
   const loadVMResources = async (isConnected) => {
@@ -623,32 +879,26 @@ export const DashboardCacheProvider = ({ children }) => {
         const isConnected = status.ssh_connected && status.mysql_connected
 
         if (isConnected) {
-          // Carregar dados iniciais
-          await loadDashboardData(isConnected)
-          await loadVMResources(isConnected)
+          // Carregar dados iniciais - OTIMIZADO: usa endpoint consolidado
+          // USAR force=true para carregar IMEDIATAMENTE ao iniciar
+          await loadDashboardDataFast(isConnected, true)
         }
 
-        // Iniciar intervalos mesmo se não estiver conectado (vai tentar reconectar)
-        // Reduzir frequência para evitar sobrecarga - cache do backend já atualiza em background
+        // Check connection every 2 seconds for faster recovery
         dataIntervalRef.current = setInterval(async () => {
           const intervalId = `INTERVAL-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
           try {
             const status = await api.getConnectionStatus()
             const isConnected = status.ssh_connected && status.mysql_connected
             if (isConnected) {
-              await loadDashboardData(isConnected)
+              await loadDashboardDataFast(isConnected)
             }
           } catch (error) {
-            console.error(`[${intervalId}] Erro ao atualizar dados do dashboard:`, {
-              intervalId,
-              message: error.message,
-              error
-            })
+            console.error(`[${intervalId}] Erro ao atualizar dados do dashboard:`, error.message)
           }
-        }, 10000) // A cada 10 segundos (sincronizado com o backend)
+        }, 3000)
 
         resourcesIntervalRef.current = setInterval(async () => {
-          const intervalId = `VM-INTERVAL-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
           try {
             const status = await api.getConnectionStatus()
             const isConnected = status.ssh_connected && status.mysql_connected
@@ -656,13 +906,9 @@ export const DashboardCacheProvider = ({ children }) => {
               await loadVMResources(isConnected)
             }
           } catch (error) {
-            console.error(`[${intervalId}] Erro ao atualizar recursos da VM:`, {
-              intervalId,
-              message: error.message,
-              error
-            })
+            // Silencioso
           }
-        }, 10000) // A cada 10 segundos (sincronizado com o backend)
+        }, 10000) // Recursos da VM a cada 10s está OK
       } catch (error) {
         console.error('Erro ao verificar conexão inicial:', error)
       }
@@ -685,11 +931,11 @@ export const DashboardCacheProvider = ({ children }) => {
   }, [])
 
   // Função para forçar atualização manual (usar useCallback para evitar re-criação)
-  const refreshData = useCallback(async (isConnected) => {
+  // OTIMIZADO: Usa endpoint consolidado por padrão (5 chamadas -> 1)
+  const refreshData = useCallback(async (isConnected, force = false) => {
     if (isConnected) {
-      console.log('[DASHBOARD CACHE] refreshData chamado manualmente')
-      await loadDashboardData(isConnected)
-      await loadVMResources(isConnected)
+      console.log(`[DASHBOARD CACHE] refreshData chamado (force=${force}) - usando endpoint consolidado`)
+      await loadDashboardDataFast(isConnected, force)
     }
   }, []) // Dependências vazias porque as funções já têm suas próprias proteções
 
@@ -697,6 +943,7 @@ export const DashboardCacheProvider = ({ children }) => {
     cachedData,
     refreshData,
     loadDashboardData,
+    loadDashboardDataFast,  // Nova função otimizada
     loadVMResources,
   }), [cachedData, refreshData])
 

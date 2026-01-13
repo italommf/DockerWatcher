@@ -1,5 +1,5 @@
 // Configuração da API - URL do backend
-const DEFAULT_API_URL = 'http://127.0.0.1:8000'
+const DEFAULT_API_URL = 'http://localhost:8000'
 
 // Função para obter URL da API do localStorage ou usar padrão
 export function getApiUrl() {
@@ -23,7 +23,7 @@ export function setApiUrl(url) {
     } catch (e) {
       throw new Error('URL inválida')
     }
-    
+
     localStorage.setItem('api_base_url', url)
     return true
   } catch (error) {
@@ -42,7 +42,7 @@ export async function testApiConnection(url) {
       },
       signal: AbortSignal.timeout(5000), // 5 segundos de timeout
     })
-    
+
     if (response.ok) {
       return { success: true, message: 'Conexão bem-sucedida' }
     } else {

@@ -15,6 +15,7 @@ import {
 import { Add, Delete, Search as SearchIcon, Edit } from '@mui/icons-material'
 import api from '../services/api'
 import { useSnackbar } from 'notistack'
+import { useDashboardCache } from '../context/DashboardCacheContext'
 
 const DeploymentCard = ({ deployment, onDelete, onEdit }) => {
   const isHealthy = deployment.ready_replicas === deployment.replicas
@@ -161,6 +162,27 @@ export default function Deployments({ isConnected = true, onReconnect, onEdit })
   const [searchTerm, setSearchTerm] = useState('')
   const [loading, setLoading] = useState(true)
   const { enqueueSnackbar } = useSnackbar()
+  const { cachedData, refreshData } = useDashboardCache()
+
+  // Sincronizar com o cache global (atualizado a cada 3s)
+  useEffect(() => {
+    if (cachedData?.deployments !== null && cachedData?.deployments !== undefined) {
+      setDeployments(cachedData.deployments)
+      setLoading(false)
+    }
+  }, [cachedData?.deployments])
+
+  // Carregar dados iniciais se cache estiver vazio
+  useEffect(() => {
+    if (isConnected && cachedData?.deployments === null) {
+      refreshData(isConnected, true).catch(err => {
+        console.error('Erro init deployments:', err)
+        setLoading(false)
+      })
+    } else if (cachedData?.deployments !== null) {
+      setLoading(false)
+    }
+  }, [isConnected, cachedData?.deployments])
 
   // Filtrar deployments baseado no termo de pesquisa
   const filteredDeployments = useMemo(() => {
@@ -174,34 +196,11 @@ export default function Deployments({ isConnected = true, onReconnect, onEdit })
     )
   }, [deployments, searchTerm])
 
-  useEffect(() => {
-    if (isConnected) {
-      loadDeployments()
-      const interval = setInterval(() => {
-        if (isConnected) loadDeployments()
-      }, 10000) // A cada 10 segundos (sincronizado com o backend)
-      return () => clearInterval(interval)
-    } else {
-      setLoading(false)
-    }
-  }, [isConnected])
-
   const loadDeployments = async () => {
-    if (!isConnected) return // Não tentar carregar se desconectado
-
-    try {
-      setLoading(true)
-      const data = await api.getDeployments()
-      setDeployments(Array.isArray(data) ? data : [])
-    } catch (error) {
-      console.error('Erro ao carregar deployments:', error)
-      // Não limpar deployments em caso de erro - manter cache
-      if (isConnected) {
-        enqueueSnackbar(`Erro ao carregar deployments: ${error.message}`, { variant: 'error' })
-      }
-    } finally {
-      setLoading(false)
-    }
+    if (!isConnected) return
+    setLoading(true)
+    await refreshData(isConnected, true)
+    setLoading(false)
   }
 
   const handleDelete = async (deployment) => {

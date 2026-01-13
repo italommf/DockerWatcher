@@ -1,6 +1,6 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from api.views import jobs, rpas, cronjobs, deployments, pods, executions, connection, config, falhas, resources
+from api.views import jobs, rpas, cronjobs, deployments, pods, executions, connection, config, falhas, resources, dashboard
 
 router = DefaultRouter()
 router.register(r'jobs', jobs.JobViewSet, basename='job')
@@ -21,5 +21,8 @@ urlpatterns = [
     path('config/save/', config.save_config, name='config-save'),
     path('resources/vm/', resources.vm_resources, name='vm-resources'),
     path('resources/pods/', resources.pod_resources, name='pod-resources'),
+    # Endpoints consolidados para Dashboard
+    path('dashboard/full/', dashboard.dashboard_full, name='dashboard-full'),
+    path('dashboard/cache-stats/', dashboard.cache_stats, name='cache-stats'),
 ]
 

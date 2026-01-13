@@ -18,6 +18,7 @@ import {
 import { Add, PlayArrow, Edit, Delete, Search as SearchIcon } from '@mui/icons-material'
 import api from '../services/api'
 import { useSnackbar } from 'notistack'
+import { useDashboardCache } from '../context/DashboardCacheContext'
 
 const CronjobCard = ({ cronjob, onRunNow, onToggleSuspend, onEdit, onDelete }) => {
   const statusColor = cronjob.suspended ? '#F59E0B' : '#10B981'
@@ -208,6 +209,27 @@ export default function Cronjobs({ isConnected = true, onReconnect, onEdit }) {
   const [searchTerm, setSearchTerm] = useState('')
   const [loading, setLoading] = useState(true)
   const { enqueueSnackbar } = useSnackbar()
+  const { cachedData, refreshData } = useDashboardCache()
+
+  // Sincronizar com o cache global (atualizado a cada 3s)
+  useEffect(() => {
+    if (cachedData?.cronjobs !== null && cachedData?.cronjobs !== undefined) {
+      setCronjobs(cachedData.cronjobs)
+      setLoading(false)
+    }
+  }, [cachedData?.cronjobs])
+
+  // Carregar dados iniciais se cache estiver vazio
+  useEffect(() => {
+    if (isConnected && cachedData?.cronjobs === null) {
+      refreshData(isConnected, true).catch(err => {
+        console.error('Erro init cronjobs:', err)
+        setLoading(false)
+      })
+    } else if (cachedData?.cronjobs !== null) {
+      setLoading(false)
+    }
+  }, [isConnected, cachedData?.cronjobs])
 
   // Filtrar cronjobs baseado no termo de pesquisa
   const filteredCronjobs = useMemo(() => {
@@ -222,31 +244,11 @@ export default function Cronjobs({ isConnected = true, onReconnect, onEdit }) {
     )
   }, [cronjobs, searchTerm])
 
-  useEffect(() => {
-    // Carregar apenas quando a aba for aberta - dados vêm do cache (atualizado a cada 5s em background)
-    if (isConnected) {
-      loadCronjobs()
-    } else {
-      setLoading(false)
-    }
-  }, [isConnected])
-
   const loadCronjobs = async () => {
-    if (!isConnected) return // Não tentar carregar se desconectado
-
-    try {
-      setLoading(true)
-      const data = await api.getCronjobs()
-      setCronjobs(Array.isArray(data) ? data : [])
-    } catch (error) {
-      console.error('Erro ao carregar cronjobs:', error)
-      // Não limpar cronjobs em caso de erro - manter cache
-      if (isConnected) {
-        enqueueSnackbar(`Erro ao carregar cronjobs: ${error.message}`, { variant: 'error' })
-      }
-    } finally {
-      setLoading(false)
-    }
+    if (!isConnected) return
+    setLoading(true)
+    await refreshData(isConnected, true)
+    setLoading(false)
   }
 
   const handleRunNow = async (cronjob) => {

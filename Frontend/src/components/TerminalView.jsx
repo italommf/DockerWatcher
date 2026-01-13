@@ -23,7 +23,7 @@ import {
 import api from '../services/api'
 import { useSnackbar } from 'notistack'
 
-export default function TerminalView({ open, onClose, podName }) {
+export default function TerminalView({ open, onClose, podName, namespace }) {
     const [logs, setLogs] = useState('')
     const [loading, setLoading] = useState(false)
     const [tail, setTail] = useState(100)
@@ -31,12 +31,18 @@ export default function TerminalView({ open, onClose, podName }) {
     const { enqueueSnackbar } = useSnackbar()
 
     const fetchLogs = async () => {
-        if (!podName) return
+        if (!podName) {
+            console.warn('[TERMINAL] podName não definido, não é possível buscar logs')
+            setLogs('Nenhum pod selecionado para exibir logs.')
+            return
+        }
 
+        console.log(`[TERMINAL] Buscando logs do pod '${podName}' (namespace=${namespace}, tail=${tail})`)
         setLoading(true)
         try {
             // api.getPodLogs retorna { logs: "string content..." } ou array de linhas
-            const data = await api.getPodLogs(podName, tail)
+            const data = await api.getPodLogs(podName, tail, namespace)
+            console.log('[TERMINAL] Resposta recebida:', typeof data, data)
 
             let logContent = ''
             if (typeof data === 'string') {
@@ -47,9 +53,10 @@ export default function TerminalView({ open, onClose, podName }) {
                 logContent = JSON.stringify(data, null, 2)
             }
 
-            setLogs(logContent || 'Nenhum log disponível.')
+            console.log(`[TERMINAL] Logs processados: ${logContent.length} caracteres`)
+            setLogs(logContent || 'Nenhum log disponível para este pod.')
         } catch (error) {
-            console.error('Erro ao buscar logs:', error)
+            console.error('[TERMINAL] Erro ao buscar logs:', error)
             setLogs(`Erro ao buscar logs: ${error.message}`)
             enqueueSnackbar('Erro ao buscar logs', { variant: 'error' })
         } finally {

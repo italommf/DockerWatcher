@@ -28,6 +28,7 @@ import {
 import { Close as CloseIcon, Refresh as RefreshIcon, Visibility as VisibilityIcon, ExpandMore as ExpandMoreIcon } from '@mui/icons-material'
 import api from '../services/api'
 import { useSnackbar } from 'notistack'
+import { useDashboardCache } from '../context/DashboardCacheContext'
 
 export default function Falhas({ isConnected = true, onReconnect }) {
   const [failedPods, setFailedPods] = useState([])
@@ -39,6 +40,27 @@ export default function Falhas({ isConnected = true, onReconnect }) {
   const [tail, setTail] = useState(100)
   const [expandedRobots, setExpandedRobots] = useState({}) // Estado para controlar quais robôs estão expandidos
   const { enqueueSnackbar } = useSnackbar()
+  const { cachedData, refreshData } = useDashboardCache()
+
+  // Sincronizar com o cache global (atualizado a cada 3s)
+  useEffect(() => {
+    if (cachedData?.failedPods !== null && cachedData?.failedPods !== undefined) {
+      setFailedPods(cachedData.failedPods)
+      setLoading(false)
+    }
+  }, [cachedData?.failedPods])
+
+  // Carregar dados iniciais se cache estiver vazio
+  useEffect(() => {
+    if (isConnected && cachedData?.failedPods === null) {
+      refreshData(isConnected, true).catch(err => {
+        console.error('Erro init falhas:', err)
+        setLoading(false)
+      })
+    } else if (cachedData?.failedPods !== null) {
+      setLoading(false)
+    }
+  }, [isConnected, cachedData?.failedPods])
 
   // Função para extrair nome do robô do nome do pod
   const extrairNomeRoboDoPod = (podName) => {
@@ -142,36 +164,11 @@ export default function Falhas({ isConnected = true, onReconnect }) {
     }))
   }
 
-  useEffect(() => {
-    if (isConnected) {
-      loadFailedPods()
-      const interval = setInterval(() => {
-        if (isConnected) loadFailedPods()
-      }, 10000) // Atualizar a cada 10s (sincronizado com o backend)
-      return () => clearInterval(interval)
-    } else {
-      setLoading(false)
-    }
-  }, [isConnected])
-
   const loadFailedPods = async () => {
-    if (!isConnected) return // Não tentar carregar se desconectado
-
-    try {
-      setLoading(true)
-      // Buscar pods com falhas do banco de dados
-      const failed = await api.getFailedPods()
-
-      setFailedPods(Array.isArray(failed) ? failed : [])
-    } catch (error) {
-      console.error('Erro ao carregar pods falhados:', error)
-      // Não limpar failedPods em caso de erro - manter cache
-      if (isConnected) {
-        enqueueSnackbar(`Erro ao carregar falhas: ${error.message}`, { variant: 'error' })
-      }
-    } finally {
-      setLoading(false)
-    }
+    if (!isConnected) return
+    setLoading(true)
+    await refreshData(isConnected, true)
+    setLoading(false)
   }
 
   const handleViewLogs = async (pod) => {

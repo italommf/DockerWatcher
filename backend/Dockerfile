@@ -1,5 +1,10 @@
 FROM python:3.11-slim
 
+# Variáveis de ambiente
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV USE_GUNICORN=1
+
 # Definir diretório de trabalho
 WORKDIR /app
 
@@ -11,9 +16,9 @@ RUN apt-get update && apt-get install -y \
     gcc \
     && rm -rf /var/lib/apt/lists/*
 
-# Copiar requirements e instalar dependências Python
+# Copiar requirements e instalar dependências Python (+ gunicorn)
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt gunicorn
 
 # Copiar código da aplicação
 COPY . .

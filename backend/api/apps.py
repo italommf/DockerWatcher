@@ -3,6 +3,7 @@ import logging
 import threading
 import time
 import sys
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -16,10 +17,11 @@ class ApiConfig(AppConfig):
         if 'migrate' in sys.argv or 'makemigrations' in sys.argv or 'test' in sys.argv:
             return
         
-        # Verificar se é o servidor de desenvolvimento (runserver)
+        # Verificar se é o servidor de desenvolvimento (runserver) ou Gunicorn
         is_runserver = 'runserver' in sys.argv
+        is_gunicorn = os.getenv('GUNICORN_RUNNING') == '1'
         
-        if not is_runserver:
+        if not is_runserver and not is_gunicorn:
             return
         
         # Importar aqui para evitar importação circular
@@ -33,7 +35,8 @@ class ApiConfig(AppConfig):
                 try:
                     # Aguardar mais tempo para garantir que o Django está totalmente pronto
                     # e que todos os módulos foram carregados corretamente
-                    time.sleep(8)
+                    # Reduzir delay inicial para maior agilidade local
+                    time.sleep(2)
                     
                     # Verificar se o arquivo de configuração existe antes de tentar conectar
                     try:

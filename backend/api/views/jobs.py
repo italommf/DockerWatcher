@@ -20,10 +20,13 @@ class JobViewSet(viewsets.ViewSet):
     def list(self, request):
         """Lista todos os jobs."""
         label_selector = request.query_params.get('label_selector', None)
-        jobs = CacheService.get_data(CacheKeys.JOBS, []) or []
-        if not jobs:
-            jobs = self.k8s_service.get_jobs()
-            CacheService.update(CacheKeys.JOBS, jobs)
+        force_refresh = request.query_params.get('refresh', 'false').lower() == 'true'
+        
+        # Jobs mudam frequentemente, sempre buscar dados frescos do K8s
+        # para evitar mostrar jobs que já não existem mais
+        jobs = self.k8s_service.get_jobs()
+        CacheService.update(CacheKeys.JOBS, jobs)
+        
         if label_selector:
             jobs = self._filter_by_label(jobs, label_selector)
         

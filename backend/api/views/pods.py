@@ -59,14 +59,52 @@ class PodViewSet(viewsets.ViewSet):
     
     @action(detail=True, methods=['get'])
     def logs(self, request, pk=None):
-        """Obtém logs de um pod."""
+        """Obtém logs de um pod ou job.
+        
+        Se 'pk' for um nome de pod, busca os logs diretamente.
+        Se for um nome de job, tenta encontrar o pod associado primeiro.
+        """
         tail = request.query_params.get('tail', 100)
+        namespace = request.query_params.get('namespace', None)
+        
         try:
             tail = int(tail)
         except ValueError:
             tail = 100
         
-        logs = self.k8s_service.get_pod_logs(pk, tail=tail)
+        logger.info(f"[PODS] Requisição de logs para '{pk}' (namespace={namespace}, tail={tail})")
+        
+        # Primeiro tentar obter logs diretamente (pk é nome do pod)
+        logs = self.k8s_service.get_pod_logs(pk, tail=tail, namespace=namespace)
+        
+        # Se falhar e parecer ser um job (não encontrou pod), tentar buscar pod do job
+        if not logs or "não encontrado" in logs.lower() or "error" in logs.lower():
+            logger.info(f"[PODS] Tentando buscar pod associado ao job '{pk}'")
+            
+            # Buscar pods associados a este job
+            all_pods = CacheService.get_data(CacheKeys.PODS, []) or self.k8s_service.get_pods()
+            
+            # Procurar pod com label job-name = pk
+            job_pod = None
+            for pod in all_pods:
+                labels = pod.get('labels', {})
+                if labels.get('job-name') == pk:
+                    job_pod = pod
+                    break
+            
+            if job_pod:
+                pod_name = job_pod.get('name', '')
+                pod_namespace = job_pod.get('namespace', namespace)
+                logger.info(f"[PODS] Encontrado pod '{pod_name}' para o job '{pk}'")
+                logs = self.k8s_service.get_pod_logs(pod_name, tail=tail, namespace=pod_namespace)
+            else:
+                logger.warning(f"[PODS] Nenhum pod encontrado para o job '{pk}'")
+                logs = f"Nenhum pod encontrado para o job '{pk}'. O job pode ter sido concluído e o pod removido."
+        
+        if not logs:
+            logs = "Nenhum log disponível para este pod."
+        
+        logger.info(f"[PODS] Retornando {len(logs)} caracteres de logs para '{pk}'")
         
         serializer = PodLogsSerializer({'logs': logs})
         return Response(serializer.data)

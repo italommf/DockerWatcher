@@ -184,9 +184,19 @@ class SSHService:
                 client = self._ensure_client()
                 stdin, stdout, stderr = client.exec_command(command, timeout=timeout)
                 
+                # Aguardar o comando terminar com timeout real para execução
+                import time
+                start_time = time.time()
+                while not stdout.channel.exit_status_ready():
+                    if time.time() - start_time > timeout:
+                        logger.warning(f"Timeout na execução do comando SSH ({timeout}s): {command}")
+                        stdout.channel.close()
+                        raise TimeoutError(f"Comando SSH excedeu o timeout de {timeout}s")
+                    time.sleep(0.1)
+                
                 return_code = stdout.channel.recv_exit_status()
-                stdout_text = stdout.read().decode('utf-8')
-                stderr_text = stderr.read().decode('utf-8')
+                stdout_text = stdout.read().decode('utf-8', errors='replace')
+                stderr_text = stderr.read().decode('utf-8', errors='replace')
                 
                 return return_code, stdout_text, stderr_text
             except Exception as e:

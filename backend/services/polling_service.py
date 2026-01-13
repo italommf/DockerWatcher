@@ -207,7 +207,7 @@ class PollingService:
                 clean_name = nome_robo
                 
                 # Remover prefixos
-                for prefix in ['rpa-cronjob-', 'rpa-job-', 'cronjob-', 'job-', 'rpa-']:
+                for prefix in ['rpa-cronjob-', 'rpa-job-', 'cronjob-', 'job-', 'rpa-', 'exec-', 'manual-', 'deployment-']:
                     if clean_name.startswith(prefix):
                         clean_name = clean_name[len(prefix):]
                         break
@@ -272,17 +272,41 @@ class PollingService:
             logger.debug(f"Erro ao processar RPAs para cache: {e}")
     
     def _contar_jobs_por_rpa_cache(self) -> Dict[str, int]:
-        """Conta jobs por RPA usando cache."""
+        """Conta jobs por RPA usando cache com identificação robusta."""
         jobs_cache = CacheService.get_data(CacheKeys.JOBS, []) or []
         jobs_por_rpa = {}
+        import re
+        
         for job in jobs_cache:
-            labels = job.get("labels", {}) if isinstance(job, dict) else {}
+            if not isinstance(job, dict):
+                continue
+            
+            labels = job.get("labels", {})
             nome_robo = (labels.get("nome_robo") or labels.get("nome-robo") or labels.get("app") or "").lower()
+            
+            if not nome_robo:
+                # Fallback para o nome do job se as labels padrão falharem
+                job_name = job.get("name", "")
+                # Tentar extrair nome base (mesma lógica de _collect_rpa_names)
+                nome_robo = re.sub(r'-(manual-)?\d+$', '', job_name)
+                nome_robo = re.sub(r'-[a-z0-9]{5,}$', '', nome_robo)
+                for prefix in ['rpa-cronjob-', 'rpa-job-', 'cronjob-', 'job-', 'rpa-', 'exec-', 'manual-', 'deployment-']:
+                    if nome_robo.startswith(prefix):
+                        nome_robo = nome_robo[len(prefix):]
+                        break
+                nome_robo = nome_robo.lower()
+
             if not nome_robo:
                 continue
+                
             active = job.get("active", 0)
             if active > 0:
-                jobs_por_rpa[nome_robo] = jobs_por_rpa.get(nome_robo, 0) + active
+                nome_normalizado = nome_robo.replace("-", "").replace("_", "")
+                jobs_por_rpa[nome_normalizado] = jobs_por_rpa.get(nome_normalizado, 0) + active
+                # Também guardar com o nome "com traços" para compatibilidade
+                if nome_robo != nome_normalizado:
+                    jobs_por_rpa[nome_robo] = jobs_por_rpa.get(nome_robo, 0) + active
+                    
         return jobs_por_rpa
     
     def _buscar_execucoes_cache(self, nome_rpa: str, exec_cache: Dict[str, List[Dict]]) -> int:
@@ -297,120 +321,148 @@ class PollingService:
         return 0
 
     def _processar_e_cachear_cronjobs(self, k8s_cronjobs: List[Dict]):
-        """Processa lista de cronjobs do Kubernetes e banco local, armazena no cache."""
         try:
             from api.models import RoboDockerizado
             import re
             
-            # Buscar cronjobs do banco de dados
+            # 1. Buscar todos os cronjobs do banco de dados (base principal)
             try:
-                db_cronjobs = {cj.nome: cj for cj in RoboDockerizado.objects.filter(tipo='cronjob')}
+                db_cronjobs = {cj.nome: cj for cj in RoboDockerizado.objects.filter(tipo='cronjob', ativo=True)}
+                logger.info(f"[CRONJOBS] Encontrados {len(db_cronjobs)} cronjobs no banco de dados")
             except Exception as e:
                 logger.debug(f"Erro ao buscar cronjobs do banco: {e}")
                 db_cronjobs = {}
             
-            # Buscar execuções do cache
+            # 2. Mapa dos cronjobs do Kubernetes para fácil busca
+            k8s_map = {cj.get('name'): cj for cj in k8s_cronjobs if cj.get('name')}
+            logger.info(f"[CRONJOBS] Encontrados {len(k8s_cronjobs)} cronjobs no Kubernetes, {len(k8s_map)} com nome válido")
+            logger.info(f"[CRONJOBS] Nomes dos cronjobs no K8s: {list(k8s_map.keys())}")
+            
+            # 3. Buscar execuções do cache
             execucoes_por_robo = CacheService.get_data(CacheKeys.EXECUTIONS, {}) or {}
             
             cronjobs_processados = []
-            for cj in k8s_cronjobs:
+            
+            # Processar todos os cronjobs do banco
+            for nome_cj, db_cj in db_cronjobs.items():
                 try:
-                    nome = cj.get('name', '')
-                    if not nome:
-                        continue
+                    # Dados básicos do banco
+                    cj_data = db_cj.to_dict()
                     
-                    # Buscar no banco de dados
-                    db_cj = db_cronjobs.get(nome)
-                    
-                    if db_cj:
-                        apelido = db_cj.apelido or ''
-                        tags = db_cj.tags or []
-                        dependente_de_execucoes = getattr(db_cj, 'dependente_de_execucoes', True)
-                        if not isinstance(tags, list):
-                            tags = []
+                    # Enriquecer com dados do Kubernetes se existir
+                    k8s_cj = k8s_map.get(nome_cj)
+                    if k8s_cj:
+                        cj_data.update({
+                            'schedule': k8s_cj.get('schedule', cj_data.get('schedule')),
+                            'suspended': k8s_cj.get('suspended', cj_data.get('suspended')),
+                            'last_schedule_time': k8s_cj.get('last_schedule_time', cj_data.get('last_schedule_time')),
+                            'last_successful_time': k8s_cj.get('last_successful_time', cj_data.get('last_successful_time')),
+                            'image': k8s_cj.get('image', ''),
+                            'namespace': k8s_cj.get('namespace', cj_data.get('namespace')),
+                        })
+                        logger.debug(f"[CRONJOBS] Cronjob do banco '{nome_cj}' encontrado no K8s")
                     else:
-                        apelido = ''
-                        tags = []
-                        dependente_de_execucoes = True
+                        cj_data['_no_k8s'] = True
+                        logger.warning(f"[CRONJOBS] Cronjob do banco '{nome_cj}' NÃO encontrado no K8s")
                     
-                    # Adicionar tag automática "Agendado" se não existir
-                    if 'Agendado' not in tags:
-                        tags.append('Agendado')
-                    
-                    # Buscar execuções se for dependente
+                    # Calcular execuções pendentes
                     execucoes_pendentes = 0
-                    if dependente_de_execucoes:
-                        nome_rpa = nome.replace('rpa-cronjob-', '').replace('-cronjob', '')
+                    if db_cj.dependente_de_execucoes:
+                        nome_rpa = nome_cj.replace('rpa-cronjob-', '').replace('-cronjob', '')
                         nome_rpa = re.sub(r'-\d+$', '', nome_rpa)
                         execucoes_pendentes = self._buscar_execucoes_cache(nome_rpa, execucoes_por_robo)
                     
-                    cj['apelido'] = apelido
-                    cj['tags'] = tags
-                    cj['dependente_de_execucoes'] = dependente_de_execucoes
-                    cj['execucoes_pendentes'] = execucoes_pendentes
-                    cronjobs_processados.append(cj)
+                    cj_data['execucoes_pendentes'] = execucoes_pendentes
+                    
+                    # Adicionar tag automática "Agendado" se não existir
+                    tags = cj_data.get('tags', [])
+                    if 'Agendado' not in tags:
+                        tags.append('Agendado')
+                    cj_data['tags'] = tags
+                    
+                    cronjobs_processados.append(cj_data)
                 except Exception as e:
-                    logger.debug(f"Erro ao processar cronjob {cj.get('name', 'unknown')}: {e}")
+                    logger.debug(f"Erro ao processar cronjob {nome_cj}: {e}")
                     continue
             
+            # 4. Adicionar cronjobs que estão no K8s mas NÃO no banco (para visibilidade total)
+            cronjobs_k8s_sem_banco = 0
+            for nome_k8s, k8s_cj in k8s_map.items():
+                if nome_k8s not in db_cronjobs:
+                    try:
+                        k8s_cj['execucoes_pendentes'] = 0
+                        k8s_cj['apelido'] = k8s_cj.get('apelido') or 'Somente Kubernetes'
+                        if 'Agendado' not in k8s_cj.get('tags', []):
+                            k8s_cj.setdefault('tags', []).append('Agendado')
+                        cronjobs_processados.append(k8s_cj)
+                        cronjobs_k8s_sem_banco += 1
+                        logger.info(f"[CRONJOBS] Adicionando cronjob do K8s '{nome_k8s}' que não está no banco")
+                    except Exception as e:
+                        logger.debug(f"Erro ao adicionar cronjob do K8s '{nome_k8s}': {e}")
+                        continue
+            
+            logger.info(f"[CRONJOBS] Total processado: {len(cronjobs_processados)} (banco: {len(db_cronjobs)}, K8s sem banco: {cronjobs_k8s_sem_banco})")
             CacheService.update(CacheKeys.CRONJOBS_PROCESSED, cronjobs_processados)
         except Exception as e:
-            logger.debug(f"Erro ao processar cronjobs para cache: {e}")
+            logger.error(f"Erro ao processar cronjobs para cache: {e}", exc_info=True)
 
     def _processar_e_cachear_deployments(self, k8s_deployments: List[Dict]):
-        """Processa lista de deployments do Kubernetes e banco local, armazena no cache."""
         try:
             from api.models import RoboDockerizado
             
-            # Buscar deployments do banco de dados
+            # 1. Buscar todos os deployments do banco de dados
             try:
-                db_deployments = {dep.nome: dep for dep in RoboDockerizado.objects.filter(tipo='deployment')}
+                db_deployments = {dep.nome: dep for dep in RoboDockerizado.objects.filter(tipo='deployment', ativo=True)}
             except Exception as e:
                 logger.debug(f"Erro ao buscar deployments do banco: {e}")
                 db_deployments = {}
             
-            # Buscar execuções do cache
+            # 2. Mapa dos deployments do Kubernetes
+            k8s_map = {dep.get('name'): dep for dep in k8s_deployments if dep.get('name')}
+            
+            # 3. Buscar execuções do cache
             execucoes_por_robo = CacheService.get_data(CacheKeys.EXECUTIONS, {}) or {}
             
             deployments_processados = []
-            for dep in k8s_deployments:
+            
+            # Processar todos do banco
+            for nome_dep, db_dep in db_deployments.items():
                 try:
-                    nome = dep.get('name', '')
-                    if not nome:
-                        continue
+                    # Dados básicos do banco
+                    dep_data = db_dep.to_dict()
                     
-                    # Buscar no banco de dados
-                    db_dep = db_deployments.get(nome)
-                    
-                    if db_dep:
-                        apelido = db_dep.apelido or ''
-                        tags = db_dep.tags or []
-                        dependente_de_execucoes = getattr(db_dep, 'dependente_de_execucoes', True)
-                        if not isinstance(tags, list):
-                            tags = []
+                    # Enriquecer com K8s
+                    k8s_dep = k8s_map.get(nome_dep)
+                    if k8s_dep:
+                        dep_data.update({
+                            'replicas': k8s_dep.get('replicas', 0),
+                            'ready_replicas': k8s_dep.get('ready_replicas', 0),
+                            'available_replicas': k8s_dep.get('available_replicas', 0),
+                            'namespace': k8s_dep.get('namespace', dep_data.get('namespace')),
+                        })
                     else:
-                        apelido = ''
-                        tags = []
-                        dependente_de_execucoes = True
+                        dep_data['_no_k8s'] = True
+                        dep_data['ready_replicas'] = 0
                     
-                    # Adicionar tag automática "24/7" se não existir
-                    if '24/7' not in tags:
-                        tags.append('24/7')
+                    # Calcular execuções pendentes se necessário
+                    if db_dep.dependente_de_execucoes:
+                        nome_clean = nome_dep.replace('deployment-', '').replace('-deployment', '')
+                        execucoes_pendentes = self._buscar_execucoes_cache(nome_clean, execucoes_por_robo)
+                        dep_data['execucoes_pendentes'] = execucoes_pendentes
                     
-                    # Buscar execuções se for dependente
-                    execucoes_pendentes = 0
-                    if dependente_de_execucoes:
-                        nome_rpa = nome.replace('deployment-', '').replace('-deployment', '')
-                        execucoes_pendentes = self._buscar_execucoes_cache(nome_rpa, execucoes_por_robo)
-                    
-                    dep['apelido'] = apelido
-                    dep['tags'] = tags
-                    dep['dependente_de_execucoes'] = dependente_de_execucoes
-                    dep['execucoes_pendentes'] = execucoes_pendentes
-                    deployments_processados.append(dep)
+                    deployments_processados.append(dep_data)
                 except Exception as e:
-                    logger.debug(f"Erro ao processar deployment {dep.get('name', 'unknown')}: {e}")
+                    logger.debug(f"Erro ao processar deployment {nome_dep}: {e}")
                     continue
+            
+            # 4. Adicionar deployments que estão no K8s mas NÃO no banco
+            for nome_k8s, k8s_dep in k8s_map.items():
+                if nome_k8s not in db_deployments:
+                    try:
+                        k8s_dep['apelido'] = 'Somente Kubernetes'
+                        deployments_processados.append(k8s_dep)
+                    except:
+                        continue
             
             CacheService.update(CacheKeys.DEPLOYMENTS_PROCESSED, deployments_processados)
         except Exception as e:

@@ -328,15 +328,14 @@ class PollingService:
             # 1. Buscar todos os cronjobs do banco de dados (base principal)
             try:
                 db_cronjobs = {cj.nome: cj for cj in RoboDockerizado.objects.filter(tipo='cronjob', ativo=True)}
-                logger.info(f"[CRONJOBS] Encontrados {len(db_cronjobs)} cronjobs no banco de dados")
+                logger.debug(f"[CRONJOBS] Encontrados {len(db_cronjobs)} cronjobs no banco de dados")
             except Exception as e:
                 logger.debug(f"Erro ao buscar cronjobs do banco: {e}")
                 db_cronjobs = {}
             
             # 2. Mapa dos cronjobs do Kubernetes para fácil busca
             k8s_map = {cj.get('name'): cj for cj in k8s_cronjobs if cj.get('name')}
-            logger.info(f"[CRONJOBS] Encontrados {len(k8s_cronjobs)} cronjobs no Kubernetes, {len(k8s_map)} com nome válido")
-            logger.info(f"[CRONJOBS] Nomes dos cronjobs no K8s: {list(k8s_map.keys())}")
+            logger.debug(f"[CRONJOBS] Encontrados {len(k8s_cronjobs)} cronjobs no Kubernetes, {len(k8s_map)} com nome válido")
             
             # 3. Buscar execuções do cache
             execucoes_por_robo = CacheService.get_data(CacheKeys.EXECUTIONS, {}) or {}
@@ -396,12 +395,11 @@ class PollingService:
                             k8s_cj.setdefault('tags', []).append('Agendado')
                         cronjobs_processados.append(k8s_cj)
                         cronjobs_k8s_sem_banco += 1
-                        logger.info(f"[CRONJOBS] Adicionando cronjob do K8s '{nome_k8s}' que não está no banco")
                     except Exception as e:
                         logger.debug(f"Erro ao adicionar cronjob do K8s '{nome_k8s}': {e}")
                         continue
             
-            logger.info(f"[CRONJOBS] Total processado: {len(cronjobs_processados)} (banco: {len(db_cronjobs)}, K8s sem banco: {cronjobs_k8s_sem_banco})")
+            logger.debug(f"[CRONJOBS] Total processado: {len(cronjobs_processados)} (banco: {len(db_cronjobs)}, K8s sem banco: {cronjobs_k8s_sem_banco})")
             CacheService.update(CacheKeys.CRONJOBS_PROCESSED, cronjobs_processados)
         except Exception as e:
             logger.error(f"Erro ao processar cronjobs para cache: {e}", exc_info=True)

@@ -82,6 +82,17 @@ class ApiConfig(AppConfig):
                         import traceback
                         logger.warning(traceback.format_exc())
                         # Continuar mesmo se falhar - o watcher pode ser iniciado manualmente
+                    
+                    try:
+                        # Iniciar HeartbeatService para monitoramento de saúde
+                        from services.heartbeat_service import HeartbeatService
+                        heartbeat = HeartbeatService()
+                        heartbeat.start()
+                        logger.info("✓ HeartbeatService iniciado automaticamente")
+                    except Exception as e:
+                        logger.warning(f"Erro ao iniciar HeartbeatService: {e}")
+                        import traceback
+                        logger.warning(traceback.format_exc())
                 except Exception as e:
                     logger.error(f"Erro crítico ao inicializar serviços: {e}")
                     import traceback

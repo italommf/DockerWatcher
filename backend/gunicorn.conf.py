@@ -54,15 +54,7 @@ def on_starting(server):
 def when_ready(server):
     """Chamado quando o servidor está pronto para receber conexões."""
     print(f"[Gunicorn] Servidor pronto. Workers: {workers}")
-    
-    # Iniciar HeartbeatService quando o servidor estiver pronto
-    try:
-        from services.heartbeat_service import HeartbeatService
-        heartbeat = HeartbeatService()
-        heartbeat.start()
-        print("[Gunicorn] HeartbeatService iniciado")
-    except Exception as e:
-        print(f"[Gunicorn] Erro ao iniciar HeartbeatService: {e}")
+    # HeartbeatService é iniciado pelo apps.py para evitar duplicação
 
 
 def worker_int(worker):
@@ -78,13 +70,4 @@ def worker_abort(worker):
 def on_exit(server):
     """Chamado quando o servidor Gunicorn está encerrando."""
     print("[Gunicorn] Servidor encerrando...")
-    
-    # Parar HeartbeatService quando o servidor encerrar
-    try:
-        from services.heartbeat_service import HeartbeatService
-        heartbeat = HeartbeatService()
-        heartbeat.stop()
-        print("[Gunicorn] HeartbeatService parado")
-    except Exception as e:
-        print(f"[Gunicorn] Erro ao parar HeartbeatService: {e}")
 

@@ -84,11 +84,16 @@ class ApiConfig(AppConfig):
                         # Continuar mesmo se falhar - o watcher pode ser iniciado manualmente
                     
                     try:
-                        # Iniciar HeartbeatService para monitoramento de saúde
-                        from services.heartbeat_service import HeartbeatService
-                        heartbeat = HeartbeatService()
-                        heartbeat.start()
-                        logger.info("✓ HeartbeatService iniciado automaticamente")
+                        # Iniciar HeartbeatService apenas no processo principal
+                        # Evita duplicação quando Django runserver usa reloader
+                        if os.environ.get('RUN_MAIN') == 'true' or is_gunicorn:
+                            from services.heartbeat_service import HeartbeatService
+                            heartbeat = HeartbeatService()
+                            if not heartbeat.is_running():
+                                heartbeat.start()
+                                logger.info("✓ HeartbeatService iniciado automaticamente")
+                            else:
+                                logger.debug("HeartbeatService já está rodando, pulando inicialização")
                     except Exception as e:
                         logger.warning(f"Erro ao iniciar HeartbeatService: {e}")
                         import traceback

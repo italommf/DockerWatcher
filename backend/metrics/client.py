@@ -10,6 +10,9 @@ import requests
 
 logger = logging.getLogger(__name__)
 
+# Flag para indicar que Prometheus está disponível
+PROMETHEUS_AVAILABLE = True
+
 
 class PrometheusClient:
     """

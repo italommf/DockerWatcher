@@ -127,7 +127,7 @@ export const DashboardCacheProvider = ({ children }) => {
         const step = minutoParsed.step
         const minutoAtual = now.getMinutes()
         const proximoMinuto = Math.ceil((minutoAtual + 1) / step) * step
-        
+
         if (proximoMinuto < 60) {
           proxima.setMinutes(proximoMinuto)
           proxima.setHours(now.getHours())
@@ -163,7 +163,7 @@ export const DashboardCacheProvider = ({ children }) => {
       if (minutoParsed?.type === 'list') {
         const minutoAtual = now.getMinutes()
         const proximoMinutoValido = minutoParsed.values.find(m => m > minutoAtual) || minutoParsed.values[0]
-        
+
         if (proximoMinutoValido > minutoAtual) {
           proxima.setMinutes(proximoMinutoValido)
           proxima.setHours(now.getHours())
@@ -686,15 +686,15 @@ export const DashboardCacheProvider = ({ children }) => {
         cronjobsProximos: dashboardData.cronjobs_proximos?.length || 0,
         fullDataKeys: dashboardData.full_data ? Object.keys(dashboardData.full_data) : []
       })
-      
+
       const cronjobsList = dashboardData.full_data?.cronjobs || dashboardData.cronjobs_proximos || []
-      console.log(`[${requestId}] Cronjobs recebidos do backend: ${cronjobsList.length}`, cronjobsList.map(cj => ({ 
-        name: cj.name, 
-        schedule: cj.schedule, 
+      console.log(`[${requestId}] Cronjobs recebidos do backend: ${cronjobsList.length}`, cronjobsList.map(cj => ({
+        name: cj.name,
+        schedule: cj.schedule,
         suspended: cj.suspended,
         hasSchedule: !!cj.schedule
       })))
-      
+
       // NÃO filtrar por proximaExecucao - mostrar TODOS os cronjobs não suspensos
       // Mesmo que não consiga calcular a próxima execução, deve aparecer
       const cronjobsCompleto = cronjobsList
@@ -876,7 +876,7 @@ export const DashboardCacheProvider = ({ children }) => {
     const checkAndStart = async () => {
       try {
         const status = await api.getConnectionStatus()
-        const isConnected = status.ssh_connected && status.mysql_connected
+        const isConnected = status.k8s_connected && status.mysql_connected
 
         if (isConnected) {
           // Carregar dados iniciais - OTIMIZADO: usa endpoint consolidado
@@ -889,7 +889,7 @@ export const DashboardCacheProvider = ({ children }) => {
           const intervalId = `INTERVAL-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
           try {
             const status = await api.getConnectionStatus()
-            const isConnected = status.ssh_connected && status.mysql_connected
+            const isConnected = status.k8s_connected && status.mysql_connected
             if (isConnected) {
               await loadDashboardDataFast(isConnected)
             }
@@ -901,7 +901,7 @@ export const DashboardCacheProvider = ({ children }) => {
         resourcesIntervalRef.current = setInterval(async () => {
           try {
             const status = await api.getConnectionStatus()
-            const isConnected = status.ssh_connected && status.mysql_connected
+            const isConnected = status.k8s_connected && status.mysql_connected
             if (isConnected) {
               await loadVMResources(isConnected)
             }

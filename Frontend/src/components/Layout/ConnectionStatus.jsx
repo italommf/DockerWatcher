@@ -10,12 +10,12 @@ export default function ConnectionStatus({ status }) {
             width: 10,
             height: 10,
             borderRadius: '50%',
-            backgroundColor: status.ssh ? '#10B981' : '#EF4444',
-            boxShadow: status.ssh ? '0 0 8px #10B981' : '0 0 8px #EF4444',
+            backgroundColor: status.k8s ? '#10B981' : '#EF4444',
+            boxShadow: status.k8s ? '0 0 8px #10B981' : '0 0 8px #EF4444',
           }}
         />
         <Typography variant="body2" sx={{ color: '#CBD5E1' }}>
-          SSH
+          K8s
         </Typography>
       </Box>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>

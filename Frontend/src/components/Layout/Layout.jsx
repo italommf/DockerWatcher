@@ -25,19 +25,18 @@ export default function Layout() {
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [currentPage, setCurrentPage] = useState('dashboard')
   const [editingItem, setEditingItem] = useState(null)
-  const [connectionStatus, setConnectionStatus] = useState({ ssh: false, mysql: false })
+  const [connectionStatus, setConnectionStatus] = useState({ k8s: false, mysql: false })
   const [isReconnecting, setIsReconnecting] = useState(false)
   const { enqueueSnackbar } = useSnackbar()
   const { addLog } = useAppLogs()
 
-  // Collapse sidebar on mobile automatically
   useEffect(() => {
     if (isMobile) {
       setSidebarOpen(false)
     }
   }, [isMobile])
 
-  // Aggressive connection loop (proactive reconnection)
+  // Connection status loop
   useEffect(() => {
     let timeoutId
     let isMounted = true
@@ -46,47 +45,38 @@ export default function Layout() {
       if (!isMounted) return
 
       try {
-        // 1. Verificar status atual
         const status = await api.getConnectionStatus()
-        let sshOk = status.ssh_connected || false
+        let k8sOk = status.k8s_connected || false
         let mysqlOk = status.mysql_connected || false
 
-        // Atualizar estado visual
-        setConnectionStatus({ ssh: sshOk, mysql: mysqlOk })
+        setConnectionStatus({ k8s: k8sOk, mysql: mysqlOk })
 
-        // 2. Se houver qualquer desconexão, inicia tentativa PROATIVA
-        if (!sshOk || !mysqlOk) {
+        if (!k8sOk || !mysqlOk) {
           setIsReconnecting(true)
-          console.debug('[LAYOUT] Status desconectado. Iniciando tentativa de conexão proativa...')
-
           try {
             const tasks = []
-            // Tentamos conectar no que estiver offline com timeout reduzido (5s)
             const checkConfig = { timeout: 5000 }
-            if (!sshOk) tasks.push(api.testSshConnection(checkConfig))
+            if (!k8sOk) tasks.push(api.testK8sConnection(checkConfig))
             if (!mysqlOk) tasks.push(api.testMysqlConnection(checkConfig))
 
             const results = await Promise.all(tasks)
 
-            // Tentar atualizar o status local imediatamente com os resultados do teste
             results.forEach(res => {
-              if (res.ssh_connected !== undefined) sshOk = res.ssh_connected
+              if (res.k8s_connected !== undefined) k8sOk = res.k8s_connected
               if (res.mysql_connected !== undefined) mysqlOk = res.mysql_connected
             })
-            setConnectionStatus({ ssh: sshOk, mysql: mysqlOk })
+            setConnectionStatus({ k8s: k8sOk, mysql: mysqlOk })
 
           } catch (err) {
-            console.debug('[LAYOUT] Erro na tentativa de conexão proativa:', err.message)
+            console.debug('[LAYOUT] Erro na tentativa de conexão:', err.message)
           } finally {
             setIsReconnecting(false)
           }
         }
       } catch (error) {
-        // Backend offline ou erro de rede (bolinhas vermelhas)
-        setConnectionStatus({ ssh: false, mysql: false })
+        setConnectionStatus({ k8s: false, mysql: false })
       }
 
-      // Agenda a próxima execução para daqui a exatamente 1 segundo (conforme solicitado)
       if (isMounted) {
         timeoutId = setTimeout(runLoop, 1000)
       }
@@ -98,37 +88,34 @@ export default function Layout() {
       isMounted = false
       if (timeoutId) clearTimeout(timeoutId)
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const handleManualReconnect = async () => {
     if (isReconnecting) return
 
     setIsReconnecting(true)
-    addLog('info', 'Forçando reconexão manual (testando todos os serviços)...')
+    addLog('info', 'Forçando reconexão manual...')
 
     try {
-      // Primeiro garante que as configs foram recarregadas no backend
       await api.reloadServices()
 
-      // Testa as conexões explicitamente (proativo)
-      const [sshRes, mysqlRes] = await Promise.all([
-        api.testSshConnection(),
+      const [k8sRes, mysqlRes] = await Promise.all([
+        api.testK8sConnection(),
         api.testMysqlConnection()
       ])
 
       const newStatus = {
-        ssh: sshRes.ssh_connected || false,
+        k8s: k8sRes.k8s_connected || false,
         mysql: mysqlRes.mysql_connected || false,
       }
       setConnectionStatus(newStatus)
 
-      if (newStatus.ssh && newStatus.mysql) {
+      if (newStatus.k8s && newStatus.mysql) {
         addLog('success', 'Reconexão bem-sucedida!')
         enqueueSnackbar('Reconectado com sucesso!', { variant: 'success' })
       } else {
         const errors = []
-        if (!newStatus.ssh) errors.push('SSH')
+        if (!newStatus.k8s) errors.push('Kubernetes')
         if (!newStatus.mysql) errors.push('MySQL')
         enqueueSnackbar(`Falha na conexão: ${errors.join(', ')}`, { variant: 'warning' })
       }
@@ -140,21 +127,20 @@ export default function Layout() {
     }
   }
 
-  // Callback para atualizar status de conexão (usado pela página Configurações)
   const refreshConnectionStatus = async () => {
     try {
       const status = await api.getConnectionStatus()
       setConnectionStatus({
-        ssh: status.ssh_connected || false,
+        k8s: status.k8s_connected || false,
         mysql: status.mysql_connected || false,
       })
     } catch (e) {
-      setConnectionStatus({ ssh: false, mysql: false })
+      setConnectionStatus({ k8s: false, mysql: false })
     }
   }
 
   const renderPage = () => {
-    const isConnected = connectionStatus.ssh && connectionStatus.mysql
+    const isConnected = connectionStatus.k8s && connectionStatus.mysql
     const handleBack = (page) => {
       setCurrentPage(page)
       setEditingItem(null)

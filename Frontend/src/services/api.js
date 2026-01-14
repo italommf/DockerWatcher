@@ -127,8 +127,8 @@ export default {
     return response.data
   },
 
-  async testSshConnection(config = {}) {
-    const response = await apiConnection.get('/api/connection/ssh/', config)
+  async testK8sConnection(config = {}) {
+    const response = await apiConnection.get('/api/connection/k8s/', config)
     return response.data
   },
 

@@ -248,9 +248,9 @@ export default function Sidebar({ currentPage, onPageChange, isCollapsed, toggle
                   </Typography>
                 </Box>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                  <CircleIcon sx={{ fontSize: 10, color: connectionStatus?.ssh ? 'success.main' : 'error.main' }} />
+                  <CircleIcon sx={{ fontSize: 10, color: connectionStatus?.k8s ? 'success.main' : 'error.main' }} />
                   <Typography variant="body2" sx={{ color: 'text.secondary', fontWeight: 500, fontSize: '0.8rem' }}>
-                    SSH Linux
+                    Kubernetes
                   </Typography>
                 </Box>
               </Box>
@@ -277,10 +277,10 @@ export default function Sidebar({ currentPage, onPageChange, isCollapsed, toggle
                   <Typography variant="caption" sx={{ fontSize: '0.6rem', fontWeight: 700, color: 'text.secondary' }}>DB</Typography>
                 </Box>
               </Tooltip>
-              <Tooltip title={`SSH Linux: ${connectionStatus?.ssh ? 'Conectado' : 'Desconectado'}`} placement="right">
+              <Tooltip title={`Kubernetes: ${connectionStatus?.k8s ? 'Conectado' : 'Desconectado'}`} placement="right">
                 <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 0.5 }}>
-                  <CircleIcon sx={{ fontSize: 8, color: connectionStatus?.ssh ? 'success.main' : 'error.main' }} />
-                  <Typography variant="caption" sx={{ fontSize: '0.6rem', fontWeight: 700, color: 'text.secondary' }}>VM</Typography>
+                  <CircleIcon sx={{ fontSize: 8, color: connectionStatus?.k8s ? 'success.main' : 'error.main' }} />
+                  <Typography variant="caption" sx={{ fontSize: '0.6rem', fontWeight: 700, color: 'text.secondary' }}>K8s</Typography>
                 </Box>
               </Tooltip>
             </Box>

@@ -14,7 +14,7 @@ router.register(r'falhas', falhas.FalhasViewSet, basename='falha')
 urlpatterns = [
     path('', include(router.urls)),
     path('connection/status/', connection.connection_status, name='connection-status'),
-    path('connection/ssh/', connection.ssh_status, name='ssh-status'),
+    path('connection/k8s/', connection.k8s_status, name='k8s-status'),
     path('connection/mysql/', connection.mysql_status, name='mysql-status'),
     path('connection/reload/', connection.reload_services, name='connection-reload'),
     path('config/', config.get_config, name='config-get'),

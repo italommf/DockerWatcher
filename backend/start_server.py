@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """
 Script para iniciar o servidor Django com Waitress em produção.
-Inicializa serviços de background (PollingService e WatcherService).
+Refatorado - sem PollingService (removido).
 """
 import os
 import sys
@@ -11,9 +11,7 @@ from pathlib import Path
 
 # Configurar caminhos
 BASE_DIR = Path(__file__).resolve().parent
-# Adicionar diretório raiz do projeto (painel acima de backend/) ao path para permitir imports 'from ..'
 sys.path.insert(0, str(BASE_DIR.parent))
-# Adicionar diretório backend/ ao path para permitir imports diretos (opcional)
 sys.path.insert(0, str(BASE_DIR))
 
 # Configurar Django
@@ -27,27 +25,20 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
 def main():
     """Inicia o servidor com todos os serviços."""
     try:
-        # Importar serviços
         from services.service_manager import initialize_services
-        from services.polling_service import PollingService
         from services.watcher_service import WatcherService
         from services.heartbeat_service import HeartbeatService
-        from config.ssh_config import get_api_config
+        from config.config import get_api_config
         
         logger.info("=== Docker Watcher Backend - Iniciando ===")
         
-        # Inicializar serviços (SSH, MySQL, etc)
+        # Inicializar serviços (MySQL, K8s, Prometheus)
         logger.info("Inicializando serviços...")
         initialize_services()
-        
-        # Iniciar PollingService
-        logger.info("Iniciando PollingService...")
-        polling_service = PollingService()
-        polling_service.start()
-        logger.info("✓ PollingService iniciado")
         
         # Iniciar WatcherService
         logger.info("Iniciando WatcherService...")
@@ -71,7 +62,6 @@ def main():
         from docker_watcher.wsgi import application
         
         logger.info(f"Servidor iniciado em http://{host}:{port}")
-        logger.info("Aguardando requisições...")
         
         # Iniciar servidor Waitress
         serve(application, host=host, port=port, threads=4)
@@ -82,6 +72,6 @@ def main():
         logger.error(f"Erro ao iniciar servidor: {e}", exc_info=True)
         sys.exit(1)
 
+
 if __name__ == '__main__':
     main()
-

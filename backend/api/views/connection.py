@@ -1,13 +1,12 @@
 """
 Endpoints de status de conexão.
-Refatorado - sem SSH, apenas MySQL e K8s.
+Refatorado - MySQL, K8s e Prometheus apenas (sem SSH).
 """
 
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from rest_framework import status
 from services.service_manager import get_database_service, reset_services
-from api.serializers.models import ConnectionStatusSerializer
 import logging
 
 from k8s.client import get_k8s_client, K8S_AVAILABLE
@@ -18,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 @api_view(['GET'])
 def connection_status(request):
-    """Retorna status das conexões."""
+    """Retorna status das conexões (MySQL, K8s, Prometheus)."""
     # MySQL
     mysql_connected = False
     mysql_error = None
@@ -52,17 +51,14 @@ def connection_status(request):
     else:
         prom_error = "Prometheus não configurado"
     
-    data = {
-        'ssh_connected': True,  # Legado - agora sempre true
+    return Response({
         'mysql_connected': mysql_connected,
         'mysql_error': mysql_error,
         'k8s_connected': k8s_connected,
         'k8s_error': k8s_error,
         'prometheus_connected': prom_connected,
         'prometheus_error': prom_error,
-    }
-    
-    return Response(data, status=status.HTTP_200_OK)
+    }, status=status.HTTP_200_OK)
 
 
 @api_view(['POST'])
@@ -70,15 +66,10 @@ def reload_services(request):
     """Recarrega serviços."""
     try:
         reset_services()
-        
-        return Response({
-            'message': 'Serviços recarregados com sucesso.',
-        }, status=status.HTTP_200_OK)
+        return Response({'message': 'Serviços recarregados com sucesso.'}, status=status.HTTP_200_OK)
     except Exception as e:
         logger.error(f"Erro ao recarregar serviços: {e}")
-        return Response({
-            'error': str(e),
-        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 @api_view(['GET'])
@@ -90,13 +81,12 @@ def mysql_status(request):
     return Response({
         'mysql_connected': mysql_connected,
         'mysql_error': mysql_error if not mysql_connected else None,
-        'message': 'MySQL conectado' if mysql_connected else 'Falha na conexão MySQL'
     }, status=status.HTTP_200_OK)
 
 
 @api_view(['GET'])
-def ssh_status(request):
-    """Status SSH (legado - agora retorna status do K8s)."""
+def k8s_status(request):
+    """Testa conexão Kubernetes."""
     k8s_connected = False
     k8s_error = None
     
@@ -110,7 +100,6 @@ def ssh_status(request):
         k8s_error = "Pacote kubernetes não instalado"
     
     return Response({
-        'ssh_connected': k8s_connected,  # Mapeado para K8s
-        'ssh_error': k8s_error,
-        'message': 'Kubernetes conectado' if k8s_connected else 'Kubernetes desconectado'
+        'k8s_connected': k8s_connected,
+        'k8s_error': k8s_error,
     }, status=status.HTTP_200_OK)

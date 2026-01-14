@@ -14,3 +14,10 @@ port = 3306
 user = seu_usuario_mysql
 password = sua_senha_mysql
 database = bwav4
+
+[execucoes_api]
+# API para buscar execuções (MongoDB)
+# Esta API substitui a busca direta no MySQL bwav4
+base_url = http://192.168.27.252:19000
+username = rpa@bwa.global
+password = sua_senha_api

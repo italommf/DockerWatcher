@@ -9,7 +9,7 @@ from typing import Dict, List, Optional
 
 import requests
 
-from config.ssh_config import get_executions_api_config
+from config.config import get_executions_api_config
 
 logger = logging.getLogger(__name__)
 

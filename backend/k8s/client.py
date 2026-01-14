@@ -60,7 +60,7 @@ class K8sClient:
         except config.ConfigException:
             # Fallback para kubeconfig
             try:
-                from config.ssh_config import get_kubernetes_config
+                from config.config import get_kubernetes_config
                 k8s_config = get_kubernetes_config()
                 kubeconfig_path = k8s_config.get('kubeconfig_path')
                 
@@ -85,7 +85,7 @@ class K8sClient:
     def namespace(self) -> str:
         """Retorna namespace padrão."""
         try:
-            from config.ssh_config import get_kubernetes_config
+            from config.config import get_kubernetes_config
             return get_kubernetes_config().get('namespace', 'default')
         except:
             return 'default'

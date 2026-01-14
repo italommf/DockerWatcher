@@ -167,7 +167,7 @@ export default {
   },
 
   async getRPA(nomeRpa) {
-    const response = await api.get(`/api/rpas/${nomeRpa}/`)
+    const response = await api.get(`/api/rpas/${encodeURIComponent(nomeRpa)}/`)
     return response.data
   },
 
@@ -177,22 +177,22 @@ export default {
   },
 
   async updateRPA(nomeRpa, rpaData) {
-    const response = await api.put(`/api/rpas/${nomeRpa}/`, rpaData)
+    const response = await api.put(`/api/rpas/${encodeURIComponent(nomeRpa)}/`, rpaData)
     return response.data
   },
 
   async deleteRPA(nomeRpa) {
-    const response = await api.delete(`/api/rpas/${nomeRpa}/`)
+    const response = await api.delete(`/api/rpas/${encodeURIComponent(nomeRpa)}/`)
     return response.data
   },
 
   async rpaStandby(nomeRpa) {
-    const response = await api.post(`/api/rpas/${nomeRpa}/standby/`)
+    const response = await api.post(`/api/rpas/${encodeURIComponent(nomeRpa)}/standby/`)
     return response.data
   },
 
   async rpaActivate(nomeRpa) {
-    const response = await api.post(`/api/rpas/${nomeRpa}/activate/`)
+    const response = await api.post(`/api/rpas/${encodeURIComponent(nomeRpa)}/activate/`)
     return response.data
   },
 

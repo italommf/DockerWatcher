@@ -24,6 +24,7 @@ export default function CriarRPA({ isConnected = true, onReconnect, onBack }) {
   const [formData, setFormData] = useState({
     nome_rpa: '',
     docker_tag: '',
+    robo_uuid: '',
     qtd_max_instancias: 1,
     qtd_ram_maxima: 512,
     utiliza_arquivos_externos: false,
@@ -83,6 +84,12 @@ export default function CriarRPA({ isConnected = true, onReconnect, onBack }) {
       newErrors.docker_tag = 'Docker Tag é obrigatória'
     }
 
+    if (!formData.robo_uuid.trim()) {
+      newErrors.robo_uuid = 'UUID do Robô é obrigatório'
+    } else if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(formData.robo_uuid.trim())) {
+      newErrors.robo_uuid = 'UUID inválido. Formato: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'
+    }
+
     if (formData.qtd_max_instancias < 1) {
       newErrors.qtd_max_instancias = 'Quantidade de instâncias deve ser pelo menos 1'
     }
@@ -120,6 +127,7 @@ export default function CriarRPA({ isConnected = true, onReconnect, onBack }) {
       setFormData({
         nome_rpa: '',
         docker_tag: '',
+        robo_uuid: '',
         qtd_max_instancias: 1,
         qtd_ram_maxima: 512,
         utiliza_arquivos_externos: false,
@@ -219,13 +227,14 @@ export default function CriarRPA({ isConnected = true, onReconnect, onBack }) {
                   <Grid item xs={12} md={6}>
                     <TextField
                       fullWidth
-                      label="Nome do RPA"
+                      label="Nome do RPA (Arquivo .env)"
                       name="nome_rpa"
                       value={formData.nome_rpa}
                       onChange={handleChange}
                       error={!!errors.nome_rpa}
                       helperText={errors.nome_rpa}
                       required
+                      placeholder="Nome do RPA (.env)"
                       sx={{
                         '& .MuiOutlinedInput-root': {
                           color: '#fff',
@@ -242,14 +251,38 @@ export default function CriarRPA({ isConnected = true, onReconnect, onBack }) {
                   <Grid item xs={12} md={6}>
                     <TextField
                       fullWidth
-                      label="Docker Tag"
+                      label="Docker Tag (Latest ou Exec)"
                       name="docker_tag"
                       value={formData.docker_tag}
                       onChange={handleChange}
                       error={!!errors.docker_tag}
                       helperText={errors.docker_tag}
                       required
-                      placeholder="ex: minha-imagem:latest"
+                      placeholder="latest ou exec"
+                      sx={{
+                        '& .MuiOutlinedInput-root': {
+                          color: '#fff',
+                          '& fieldset': { borderColor: 'rgba(255, 255, 255, 0.3)' },
+                          '&:hover fieldset': { borderColor: 'rgba(255, 255, 255, 0.5)' },
+                          '&.Mui-focused fieldset': { borderColor: '#10B981' },
+                        },
+                        '& .MuiInputLabel-root': { color: 'rgba(255, 255, 255, 0.7)' },
+                        '& .MuiInputLabel-root.Mui-focused': { color: '#10B981' },
+                      }}
+                    />
+                  </Grid>
+
+                  <Grid item xs={12} md={6}>
+                    <TextField
+                      fullWidth
+                      label="UUID do Robô (MongoDB ou .env)"
+                      name="robo_uuid"
+                      value={formData.robo_uuid}
+                      onChange={handleChange}
+                      error={!!errors.robo_uuid}
+                      helperText={errors.robo_uuid || 'UUID do robô no MongoDB para buscar execuções pendentes'}
+                      required
+                      placeholder="ex: 550e8400-e29b-41d4-a716-446655440000"
                       sx={{
                         '& .MuiOutlinedInput-root': {
                           color: '#fff',

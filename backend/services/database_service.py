@@ -5,7 +5,7 @@ from typing import Dict, List, Optional, Tuple
 
 from mysql.connector import pooling
 
-from config.ssh_config import get_mysql_config
+from config.config import get_mysql_config
 
 logger = logging.getLogger(__name__)
 

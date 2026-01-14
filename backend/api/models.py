@@ -9,6 +9,8 @@ class RoboDockerizado(models.Model):
     # Identificação
     nome = models.CharField(max_length=255, unique=True, db_index=True)
     apelido = models.CharField(max_length=255, blank=True, null=True)
+    robo_uuid = models.CharField(max_length=36, blank=True, null=True, db_index=True, 
+                                  help_text="UUID do robô no MongoDB para buscar execuções")
     tipo = models.CharField(max_length=20, choices=[
         ('rpa', 'RPA'),
         ('cronjob', 'Cronjob'),
@@ -86,6 +88,7 @@ class RoboDockerizado(models.Model):
         if self.tipo == 'rpa':
             base_dict.update({
                 'nome_rpa': self.nome,  # Compatibilidade
+                'robo_uuid': self.robo_uuid or '',
                 'qtd_max_instancias': self.qtd_max_instancias,
                 'qtd_ram_maxima': self.qtd_ram_maxima,
                 'utiliza_arquivos_externos': self.utiliza_arquivos_externos,

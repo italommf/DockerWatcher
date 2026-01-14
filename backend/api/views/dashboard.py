@@ -93,9 +93,8 @@ def dashboard_full(request):
                 "cpu": {"usado": 0, "livre": 100}
             }
         
-        # 2. Connection status (simplificado - K8s disponível)
+        # 2. Connection status
         connection_status = {
-            "ssh_connected": True,  # Legado
             "mysql_connected": True,
             "k8s_connected": True,
         }

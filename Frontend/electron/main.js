@@ -99,7 +99,7 @@ function createWindow() {
     console.error('  Código:', errorCode)
     console.error('  Descrição:', errorDescription)
     console.error('  URL:', validatedURL)
-    
+
     if (isDev) {
       // Tentar recarregar após 3 segundos
       console.log('⏳ Tentando recarregar em 3 segundos...')
@@ -125,14 +125,10 @@ function createWindow() {
   // Mostrar janela quando estiver pronta
   mainWindow.once('ready-to-show', () => {
     mainWindow.show()
-    
-    // Abrir DevTools para ver logs (tanto em dev quanto em produção para debug)
+
+    // Abrir DevTools apenas em modo de desenvolvimento
     if (isDev) {
       mainWindow.webContents.openDevTools()
-    } else {
-      // Em produção, abrir DevTools também para debug (pode remover depois)
-      mainWindow.webContents.openDevTools()
-      console.log('💡 DevTools aberto para debug. Feche quando não precisar mais.')
     }
   })
 
@@ -163,7 +159,7 @@ app.whenReady().then(() => {
   console.log('🚀 Iniciando aplicação...')
   console.log('💡 Backend deve estar rodando em um servidor remoto')
   console.log('💡 Configure a URL do backend em Configurações')
-  
+
   createWindow()
 
   app.on('activate', () => {

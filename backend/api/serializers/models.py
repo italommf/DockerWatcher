@@ -28,6 +28,7 @@ class PodLogsSerializer(serializers.Serializer):
 class RPASerializer(serializers.Serializer):
     nome_rpa = serializers.CharField()
     docker_tag = serializers.CharField()
+    robo_uuid = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     qtd_max_instancias = serializers.IntegerField()
     qtd_ram_maxima = serializers.IntegerField()
     utiliza_arquivos_externos = serializers.BooleanField()
@@ -41,6 +42,7 @@ class RPASerializer(serializers.Serializer):
 class CreateRPASerializer(serializers.Serializer):
     nome_rpa = serializers.CharField()
     docker_tag = serializers.CharField()
+    robo_uuid = serializers.CharField(required=True, allow_blank=False, help_text="UUID do robô no MongoDB (obrigatório)")
     qtd_max_instancias = serializers.IntegerField()
     qtd_ram_maxima = serializers.IntegerField()
     utiliza_arquivos_externos = serializers.BooleanField(default=False)
@@ -50,6 +52,7 @@ class CreateRPASerializer(serializers.Serializer):
 
 class UpdateRPASerializer(serializers.Serializer):
     docker_tag = serializers.CharField(required=False)
+    robo_uuid = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     qtd_max_instancias = serializers.IntegerField(required=False)
     qtd_ram_maxima = serializers.IntegerField(required=False)
     utiliza_arquivos_externos = serializers.BooleanField(required=False)
@@ -126,8 +129,10 @@ class ExecutionSerializer(serializers.Serializer):
     # Adicione outros campos conforme necessário
 
 class ConnectionStatusSerializer(serializers.Serializer):
-    ssh_connected = serializers.BooleanField()
     mysql_connected = serializers.BooleanField()
-    ssh_error = serializers.CharField(required=False, allow_null=True)
     mysql_error = serializers.CharField(required=False, allow_null=True)
+    k8s_connected = serializers.BooleanField(required=False)
+    k8s_error = serializers.CharField(required=False, allow_null=True)
+    prometheus_connected = serializers.BooleanField(required=False)
+    prometheus_error = serializers.CharField(required=False, allow_null=True)
 

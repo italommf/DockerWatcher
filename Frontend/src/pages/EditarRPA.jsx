@@ -24,6 +24,7 @@ import { useSnackbar } from 'notistack'
 export default function EditarRPA({ isConnected = true, onReconnect, onBack, rpaName }) {
   const [formData, setFormData] = useState({
     docker_tag: '',
+    robo_uuid: '',
     qtd_max_instancias: 1,
     qtd_ram_maxima: 512,
     utiliza_arquivos_externos: false,
@@ -53,6 +54,7 @@ export default function EditarRPA({ isConnected = true, onReconnect, onBack, rpa
       const data = await api.getRPA(rpaName)
       setFormData({
         docker_tag: data.docker_tag || '',
+        robo_uuid: data.robo_uuid || '',
         qtd_max_instancias: data.qtd_max_instancias || 1,
         qtd_ram_maxima: data.qtd_ram_maxima || 512,
         utiliza_arquivos_externos: data.utiliza_arquivos_externos || false,
@@ -110,6 +112,12 @@ export default function EditarRPA({ isConnected = true, onReconnect, onBack, rpa
 
     if (!formData.docker_tag.trim()) {
       newErrors.docker_tag = 'Docker Tag é obrigatória'
+    }
+
+    if (!formData.robo_uuid.trim()) {
+      newErrors.robo_uuid = 'UUID do Robô é obrigatório'
+    } else if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(formData.robo_uuid.trim()) && formData.robo_uuid !== 'PLACEHOLDER-UUID') {
+      newErrors.robo_uuid = 'UUID inválido. Formato: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'
     }
 
     if (formData.qtd_max_instancias < 1) {
@@ -260,6 +268,30 @@ export default function EditarRPA({ isConnected = true, onReconnect, onBack, rpa
                       helperText={errors.docker_tag}
                       required
                       placeholder="ex: minha-imagem:latest"
+                      sx={{
+                        '& .MuiOutlinedInput-root': {
+                          color: '#fff',
+                          '& fieldset': { borderColor: 'rgba(255, 255, 255, 0.3)' },
+                          '&:hover fieldset': { borderColor: 'rgba(255, 255, 255, 0.5)' },
+                          '&.Mui-focused fieldset': { borderColor: '#10B981' },
+                        },
+                        '& .MuiInputLabel-root': { color: 'rgba(255, 255, 255, 0.7)' },
+                        '& .MuiInputLabel-root.Mui-focused': { color: '#10B981' },
+                      }}
+                    />
+                  </Grid>
+
+                  <Grid item xs={12} md={6}>
+                    <TextField
+                      fullWidth
+                      label="UUID do Robô (MongoDB)"
+                      name="robo_uuid"
+                      value={formData.robo_uuid}
+                      onChange={handleChange}
+                      error={!!errors.robo_uuid}
+                      helperText={errors.robo_uuid || 'UUID do robô no MongoDB para buscar execuções pendentes'}
+                      required
+                      placeholder="ex: 550e8400-e29b-41d4-a716-446655440000"
                       sx={{
                         '& .MuiOutlinedInput-root': {
                           color: '#fff',

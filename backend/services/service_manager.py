@@ -56,7 +56,7 @@ def initialize_services():
             # Verificar configuração
             try:
                 from pathlib import Path
-                from config.ssh_config import get_config_path
+                from config.config import get_config_path
                 config_path = Path(get_config_path())
                 if not config_path.exists():
                     logger.warning("Arquivo config.ini não encontrado.")

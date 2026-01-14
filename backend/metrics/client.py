@@ -33,7 +33,7 @@ class PrometheusClient:
         else:
             # Carregar da configuração
             try:
-                from config.ssh_config import get_prometheus_config
+                from config.config import get_prometheus_config
                 config = get_prometheus_config()
                 self.url = config.get('url', 'http://localhost:9090').rstrip('/')
             except:

@@ -5,24 +5,25 @@ import { Box } from '@mui/material'
 import { SnackbarProvider } from 'notistack'
 import { AppLogsProvider } from './context/AppLogsContext'
 import { DashboardCacheProvider } from './context/DashboardCacheContext'
+import { SSEProvider } from './context/SSEContext'
 import Layout from './components/Layout/Layout'
 
 const theme = createTheme({
   palette: {
     mode: 'light',
     primary: {
-      main: '#4A90D9', // Royal Blue (azul real suave)
-      light: '#7BB3EA', // Light Blue
+      main: '#4A90D9',
+      light: '#7BB3EA',
       dark: '#2E6BB5',
       contrastText: '#FFFFFF',
     },
     secondary: {
-      main: '#5ECFCF', // Turquoise (turquesa pálido)
+      main: '#5ECFCF',
       light: '#8EDFDF',
       dark: '#3BAFAF',
     },
     background: {
-      default: '#E8F4FC', // Very light sky blue background
+      default: '#E8F4FC',
       paper: '#FFFFFF',
     },
     text: {
@@ -30,13 +31,13 @@ const theme = createTheme({
       secondary: '#5D7285',
     },
     success: {
-      main: '#4ECDC4', // Turquesa para sucesso
+      main: '#4ECDC4',
     },
     warning: {
-      main: '#FFB347', // Laranja pastel
+      main: '#FFB347',
     },
     error: {
-      main: '#FF6B6B', // Vermelho suave
+      main: '#FF6B6B',
     },
     divider: 'rgba(74, 144, 217, 0.12)',
   },
@@ -138,19 +139,21 @@ function App() {
         style={{ marginTop: '10px' }}
       >
         <AppLogsProvider>
-          <DashboardCacheProvider>
-            <Box
-              sx={{
-                width: '100vw',
-                height: '100vh',
-                overflow: 'hidden',
-                position: 'relative',
-                bgcolor: 'background.default',
-              }}
-            >
-              <Layout />
-            </Box>
-          </DashboardCacheProvider>
+          <SSEProvider>
+            <DashboardCacheProvider>
+              <Box
+                sx={{
+                  width: '100vw',
+                  height: '100vh',
+                  overflow: 'hidden',
+                  position: 'relative',
+                  bgcolor: 'background.default',
+                }}
+              >
+                <Layout />
+              </Box>
+            </DashboardCacheProvider>
+          </SSEProvider>
         </AppLogsProvider>
       </SnackbarProvider>
     </ThemeProvider>

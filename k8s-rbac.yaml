@@ -1,0 +1,48 @@
+# RBAC para DockerWatcher Backend
+# kubectl apply -f k8s-rbac.yaml
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: dockerwatcher
+  namespace: default
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: dockerwatcher-role
+  namespace: default
+rules:
+# Pods - leitura, logs, deletar
+- apiGroups: [""]
+  resources: ["pods", "pods/log"]
+  verbs: ["get", "list", "watch", "delete"]
+# Jobs - CRUD completo
+- apiGroups: ["batch"]
+  resources: ["jobs"]
+  verbs: ["get", "list", "watch", "create", "delete"]
+# CronJobs - CRUD + patch (suspend/resume)
+- apiGroups: ["batch"]
+  resources: ["cronjobs"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# Deployments - CRUD + scale
+- apiGroups: ["apps"]
+  resources: ["deployments", "deployments/scale"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: dockerwatcher-rolebinding
+  namespace: default
+subjects:
+- kind: ServiceAccount
+  name: dockerwatcher
+  namespace: default
+roleRef:
+  kind: Role
+  name: dockerwatcher-role
+  apiGroup: rbac.authorization.k8s.io

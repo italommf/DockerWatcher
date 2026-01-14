@@ -1,0 +1,45 @@
+# Valores para instalação do kube-prometheus-stack
+# helm install prometheus prometheus-community/kube-prometheus-stack -f values.yaml -n monitoring --create-namespace
+
+# Prometheus
+prometheus:
+  prometheusSpec:
+    retention: 15d
+    resources:
+      requests:
+        memory: 256Mi
+        cpu: 100m
+      limits:
+        memory: 1Gi
+        cpu: 500m
+    # Expor via NodePort para acesso externo se necessário
+    # serviceMonitorSelectorNilUsesHelmValues: false
+  service:
+    type: NodePort
+    nodePort: 30090
+
+# Grafana
+grafana:
+  enabled: true
+  adminPassword: "admin123"
+  service:
+    type: NodePort
+    nodePort: 30091
+
+# Alertmanager - desabilitado por enquanto
+alertmanager:
+  enabled: false
+
+# node-exporter para métricas da VM
+nodeExporter:
+  enabled: true
+
+# kube-state-metrics para métricas do cluster
+kubeStateMetrics:
+  enabled: true
+
+# Habilitar métricas de containers
+kubelet:
+  enabled: true
+  serviceMonitor:
+    cAdvisor: true

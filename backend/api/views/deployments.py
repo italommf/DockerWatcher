@@ -1,43 +1,37 @@
+"""
+ViewSet para gerenciar Deployments.
+Refatorado para usar módulo k8s/ nativo.
+"""
+
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from services.cache_service import CacheKeys, CacheService
-from services.service_manager import get_kubernetes_service
 from api.serializers.models import DeploymentSerializer, CreateDeploymentSerializer
 from api.models import RoboDockerizado
 from django.utils import timezone
-import yaml
 import logging
+
+from k8s.deployments import DeploymentService
 
 logger = logging.getLogger(__name__)
 
+
 class DeploymentViewSet(viewsets.ViewSet):
-    """ViewSet para gerenciar deployments (armazenados no banco de dados)."""
+    """ViewSet para gerenciar deployments."""
     
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        # Usar serviços singleton para evitar reconexões constantes
-        self.k8s_service = get_kubernetes_service()
+        self.deployment_service = DeploymentService()
     
     def list(self, request):
         """Lista todos os deployments do banco de dados."""
         try:
-            # Buscar deployments do banco
             deployments_db = RoboDockerizado.objects.filter(tipo='deployment', ativo=True)
-            
-            # Buscar execuções do cache
-            execucoes_por_robo = CacheService.get_data(CacheKeys.EXECUTIONS, {}) or {}
             
             deployments_list = []
             for dep in deployments_db:
                 dep_data = dep.to_dict()
-                
-                # Buscar execuções se for dependente
-                execucoes_pendentes = 0
-                if dep.dependente_de_execucoes:
-                    execucoes_pendentes = self._buscar_execucoes_por_nome(dep.nome, execucoes_por_robo)
-                
-                dep_data['execucoes_pendentes'] = execucoes_pendentes
+                dep_data['execucoes_pendentes'] = 0  # Será implementado com API MongoDB
                 deployments_list.append(dep_data)
             
             serializer = DeploymentSerializer(deployments_list, many=True)
@@ -46,19 +40,26 @@ class DeploymentViewSet(viewsets.ViewSet):
             logger.error(f"Erro ao listar deployments: {e}", exc_info=True)
             return Response({'error': f'Erro ao listar deployments: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
+    @action(detail=False, methods=['get'])
+    def kubernetes(self, request):
+        """Lista deployments ATIVOS no Kubernetes (tempo real)."""
+        try:
+            k8s_deployments = self.deployment_service.list()
+            
+            deployments_list = [dep.to_dict() for dep in k8s_deployments]
+            
+            serializer = DeploymentSerializer(deployments_list, many=True)
+            return Response(serializer.data)
+        except Exception as e:
+            logger.error(f"Erro ao listar deployments do Kubernetes: {e}", exc_info=True)
+            return Response({'error': f'Erro ao listar deployments: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
     def retrieve(self, request, pk=None):
         """Obtém detalhes de um deployment específico."""
         try:
             dep = RoboDockerizado.objects.get(nome=pk, tipo='deployment')
             dep_data = dep.to_dict()
-            
-            # Buscar execuções
-            exec_cache = CacheService.get_data(CacheKeys.EXECUTIONS, {}) or {}
-            execucoes_pendentes = 0
-            if dep.dependente_de_execucoes:
-                execucoes_pendentes = self._buscar_execucoes_por_nome(pk, exec_cache)
-            
-            dep_data['execucoes_pendentes'] = execucoes_pendentes
+            dep_data['execucoes_pendentes'] = 0
             
             serializer = DeploymentSerializer(dep_data)
             return Response(serializer.data)
@@ -82,7 +83,6 @@ class DeploymentViewSet(viewsets.ViewSet):
         tags = dados.get('tags', []) or []
         dependente_de_execucoes = dados.get('dependente_de_execucoes', True)
         
-        # Adicionar tag padrão
         if not isinstance(tags, list):
             tags = []
         if '24/7' not in tags:
@@ -90,7 +90,7 @@ class DeploymentViewSet(viewsets.ViewSet):
         
         try:
             # Salvar no banco de dados
-            deployment = RoboDockerizado.objects.create(
+            deployment_db = RoboDockerizado.objects.create(
                 nome=nome,
                 tipo='deployment',
                 docker_tag=docker_image.split(':')[-1] if ':' in docker_image else 'latest',
@@ -103,54 +103,23 @@ class DeploymentViewSet(viewsets.ViewSet):
                 dependente_de_execucoes=dependente_de_execucoes
             )
             
-            # Gerar YAML dinamicamente (sem salvar em arquivo)
-            yaml_content = f"""apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: {nome}
-spec:
-  replicas: {replicas}
-  selector:
-    matchLabels:
-      app: {nome}
-  template:
-    metadata:
-      labels:
-        app: {nome}
-    spec:
-      restartPolicy: Always
-      imagePullSecrets:
-        - name: docker-hub-secret
-      containers:
-        - name: rpa
-          image: {docker_image}
-          imagePullPolicy: Always
-          env:
-            - name: NOME_ROBO
-              value: "{nome_robo}"
-          resources:
-            limits:
-              memory: "{memory_limit}"
-"""
+            # Criar no Kubernetes via API nativa
+            result = self.deployment_service.create(
+                name=nome,
+                image=docker_image,
+                replicas=replicas,
+                memory_limit=memory_limit,
+                labels={'app': nome, 'nome_robo': nome_robo.lower()},
+                env={'NOME_ROBO': nome_robo}
+            )
             
-            # Aplicar YAML diretamente via stdin (sem salvar arquivo)
-            yaml_dict = yaml.safe_load(yaml_content)
-            yaml_formatted = yaml.dump(yaml_dict, default_flow_style=False)
-            
-            cmd = f"kubectl create -f - <<EOF\n{yaml_formatted}\nEOF"
-            return_code, stdout, stderr = self.k8s_service.ssh_service.execute_command(cmd, timeout=30)
-            
-            if return_code != 0:
-                logger.error(f"Erro ao criar deployment: {stderr}")
-                deployment.delete()  # Reverter criação no banco
+            if not result:
+                logger.error(f"Erro ao criar deployment no Kubernetes")
+                deployment_db.delete()
                 return Response(
-                    {'error': f'Erro ao criar deployment no Kubernetes: {stderr}'}, 
+                    {'error': 'Erro ao criar deployment no Kubernetes'}, 
                     status=status.HTTP_500_INTERNAL_SERVER_ERROR
                 )
-            
-            # Invalidar cache
-            CacheService.update(CacheKeys.DEPLOYMENTS_PROCESSED, None)
-            CacheService.update(CacheKeys.DEPLOYMENTS, None)
             
             return Response({'message': 'Deployment criado com sucesso'}, status=status.HTTP_201_CREATED)
         except Exception as e:
@@ -161,11 +130,9 @@ spec:
     def destroy(self, request, pk=None):
         """Deleta um deployment do banco e Kubernetes."""
         try:
-            # Deletar do Kubernetes
-            success = self.k8s_service.delete_deployment(pk)
+            success = self.deployment_service.delete(pk)
             
             if success:
-                # Deletar do banco
                 try:
                     deployment = RoboDockerizado.objects.get(nome=pk, tipo='deployment')
                     deployment.ativo = False
@@ -173,10 +140,6 @@ spec:
                     deployment.save()
                 except RoboDockerizado.DoesNotExist:
                     pass
-                
-                # Invalidar cache
-                CacheService.update(CacheKeys.DEPLOYMENTS_PROCESSED, None)
-                CacheService.update(CacheKeys.DEPLOYMENTS, None)
                 
                 return Response({'message': 'Deployment deletado com sucesso'}, status=status.HTTP_200_OK)
             else:
@@ -191,8 +154,8 @@ spec:
         try:
             deployment = RoboDockerizado.objects.get(nome=pk, tipo='deployment')
             
-            # Deletar deployment do Kubernetes
-            success = self.k8s_service.delete_deployment(pk)
+            # Deletar deployment do Kubernetes via API nativa
+            success = self.deployment_service.delete(pk)
             
             # Atualizar banco
             deployment.status = 'standby'
@@ -200,17 +163,13 @@ spec:
             deployment.inativado_em = timezone.now()
             deployment.save()
             
-            # Invalidar cache
-            CacheService.update(CacheKeys.DEPLOYMENTS_PROCESSED, None)
-            CacheService.update(CacheKeys.DEPLOYMENTS, None)
-            
             if success:
                 return Response({
-                    'message': f'Deployment movido para standby e removido do Kubernetes.',
+                    'message': 'Deployment movido para standby e removido do Kubernetes.',
                 }, status=status.HTTP_200_OK)
             else:
                 return Response({
-                    'message': f'Deployment movido para standby no banco, mas falhou ao remover do Kubernetes.',
+                    'message': 'Deployment movido para standby no banco, mas falhou ao remover do Kubernetes.',
                 }, status=status.HTTP_200_OK)
         except RoboDockerizado.DoesNotExist:
             return Response({'error': 'Deployment não encontrado'}, status=status.HTTP_404_NOT_FOUND)
@@ -220,51 +179,24 @@ spec:
     
     @action(detail=True, methods=['post'])
     def activate(self, request, pk=None):
-        """Ativa deployment do standby (reaplica no Kubernetes)."""
+        """Ativa deployment do standby (recria no Kubernetes)."""
         try:
             deployment = RoboDockerizado.objects.get(nome=pk, tipo='deployment')
             
-            # Recriar deployment no Kubernetes com dados do banco
+            # Recriar deployment via API nativa
             docker_image = f"{deployment.docker_repository}:{deployment.docker_tag}" if deployment.docker_repository else deployment.docker_tag
             
-            yaml_content = f"""apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: {deployment.nome}
-spec:
-  replicas: {deployment.replicas}
-  selector:
-    matchLabels:
-      app: {deployment.nome}
-  template:
-    metadata:
-      labels:
-        app: {deployment.nome}
-    spec:
-      restartPolicy: Always
-      imagePullSecrets:
-        - name: docker-hub-secret
-      containers:
-        - name: rpa
-          image: {docker_image}
-          imagePullPolicy: Always
-          resources:
-            limits:
-              memory: "{deployment.memory_limit}"
-"""
+            result = self.deployment_service.create(
+                name=deployment.nome,
+                image=docker_image,
+                replicas=deployment.replicas,
+                memory_limit=deployment.memory_limit,
+                labels={'app': deployment.nome}
+            )
             
-            # Aplicar YAML via stdin
-            import yaml as yaml_lib
-            deployment_dict = yaml_lib.safe_load(yaml_content)
-            yaml_formatted = yaml_lib.dump(deployment_dict, default_flow_style=False)
-            
-            cmd = f"kubectl create -f - <<EOF\n{yaml_formatted}\nEOF"
-            return_code, stdout, stderr = self.k8s_service.ssh_service.execute_command(cmd, timeout=30)
-            
-            if return_code != 0:
-                logger.error(f"Erro ao recriar deployment: {stderr}")
+            if not result:
                 return Response(
-                    {'error': f'Erro ao recriar deployment no Kubernetes: {stderr}'}, 
+                    {'error': 'Erro ao recriar deployment no Kubernetes'}, 
                     status=status.HTTP_500_INTERNAL_SERVER_ERROR
                 )
             
@@ -274,25 +206,37 @@ spec:
             deployment.inativado_em = None
             deployment.save()
             
-            # Invalidar cache
-            CacheService.update(CacheKeys.DEPLOYMENTS_PROCESSED, None)
-            CacheService.update(CacheKeys.DEPLOYMENTS, None)
-            
             return Response({'message': 'Deployment ativado e reaplicado no Kubernetes com sucesso'}, status=status.HTTP_200_OK)
         except RoboDockerizado.DoesNotExist:
             return Response({'error': 'Deployment não encontrado'}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
             logger.error(f"Erro ao ativar deployment: {e}")
             return Response({'error': f'Erro ao ativar deployment: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-    def _buscar_execucoes_por_nome(self, nome_rpa: str, exec_cache):
-        if not isinstance(exec_cache, dict):
-            return 0
-        execucoes = exec_cache.get(nome_rpa, [])
-        if execucoes:
-            return len(execucoes)
-        nome_normalizado = nome_rpa.replace('-', '').replace('_', '').lower()
-        for nome_db, execs in exec_cache.items():
-            if nome_normalizado == nome_db.replace('-', '').replace('_', '').lower():
-                return len(execs)
-        return 0
+    
+    @action(detail=True, methods=['post'])
+    def scale(self, request, pk=None):
+        """Escala um deployment."""
+        replicas = request.data.get('replicas')
+        
+        if replicas is None:
+            return Response({'error': 'Campo replicas é obrigatório'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            replicas = int(replicas)
+        except ValueError:
+            return Response({'error': 'replicas deve ser um número'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        success = self.deployment_service.scale(pk, replicas)
+        
+        if success:
+            # Atualizar banco
+            try:
+                deployment = RoboDockerizado.objects.get(nome=pk, tipo='deployment')
+                deployment.replicas = replicas
+                deployment.save()
+            except RoboDockerizado.DoesNotExist:
+                pass
+            
+            return Response({'message': f'Deployment escalado para {replicas} réplicas'}, status=status.HTTP_200_OK)
+        else:
+            return Response({'error': 'Erro ao escalar deployment'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

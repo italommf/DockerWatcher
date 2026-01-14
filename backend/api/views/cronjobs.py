@@ -1,45 +1,40 @@
+"""
+ViewSet para gerenciar CronJobs.
+Refatorado para usar módulo k8s/ nativo.
+"""
+
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from services.cache_service import CacheKeys, CacheService
-from services.service_manager import get_kubernetes_service
-from api.serializers.models import CronjobSerializer, CreateCronjobSerializer, UpdateCronjobSerializer
+from api.serializers.models import CronjobSerializer, CreateCronjobSerializer
 from api.models import RoboDockerizado
 from django.utils import timezone
-import yaml
 import logging
 import re
 
+from k8s.cronjobs import CronJobService
+from k8s.jobs import JobService
+
 logger = logging.getLogger(__name__)
 
+
 class CronjobViewSet(viewsets.ViewSet):
-    """ViewSet para gerenciar cronjobs (armazenados no banco de dados)."""
+    """ViewSet para gerenciar cronjobs."""
     
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.k8s_service = get_kubernetes_service()
+        self.cronjob_service = CronJobService()
+        self.job_service = JobService()
     
     def list(self, request):
         """Lista todos os cronjobs do banco de dados."""
         try:
-            # Buscar cronjobs do banco
             cronjobs_db = RoboDockerizado.objects.filter(tipo='cronjob', ativo=True)
-            
-            # Buscar execuções do cache
-            execucoes_por_robo = CacheService.get_data(CacheKeys.EXECUTIONS, {}) or {}
             
             cronjobs_list = []
             for cj in cronjobs_db:
                 cj_data = cj.to_dict()
-                
-                # Buscar execuções se for dependente
-                execucoes_pendentes = 0
-                if cj.dependente_de_execucoes:
-                    nome_rpa = cj.nome.replace('rpa-cronjob-', '').replace('-cronjob', '')
-                    nome_rpa = re.sub(r'-\d+$', '', nome_rpa)
-                    execucoes_pendentes = self._buscar_execucoes_por_nome(nome_rpa, execucoes_por_robo)
-                
-                cj_data['execucoes_pendentes'] = execucoes_pendentes
+                cj_data['execucoes_pendentes'] = 0  # Será implementado com API MongoDB
                 cronjobs_list.append(cj_data)
             
             serializer = CronjobSerializer(cronjobs_list, many=True)
@@ -50,31 +45,16 @@ class CronjobViewSet(viewsets.ViewSet):
     
     @action(detail=False, methods=['get'])
     def kubernetes(self, request):
-        """Lista cronjobs ATIVOS no Kubernetes (para Dashboard)."""
+        """Lista cronjobs ATIVOS no Kubernetes (tempo real)."""
         try:
-            # Buscar cronjobs do Kubernetes (cache ou direto)
-            k8s_cronjobs = CacheService.get_data(CacheKeys.CRONJOBS, []) or []
-            if not k8s_cronjobs:
-                k8s_cronjobs = self.k8s_service.get_cronjobs()
-                CacheService.update(CacheKeys.CRONJOBS, k8s_cronjobs)
-            
-            # Buscar execuções do cache
-            execucoes_por_robo = CacheService.get_data(CacheKeys.EXECUTIONS, {}) or {}
+            # Buscar cronjobs via API nativa
+            k8s_cronjobs = self.cronjob_service.list()
             
             cronjobs_list = []
             for cj in k8s_cronjobs:
-                nome = cj.get('name', '')
-                if not nome:
-                    continue
-                
-                # Buscar execuções
-                execucoes_pendentes = 0
-                nome_rpa = nome.replace('rpa-cronjob-', '').replace('-cronjob', '')
-                nome_rpa = re.sub(r'-\d+$', '', nome_rpa)
-                execucoes_pendentes = self._buscar_execucoes_por_nome(nome_rpa, execucoes_por_robo)
-                
-                cj['execucoes_pendentes'] = execucoes_pendentes
-                cronjobs_list.append(cj)
+                cj_data = cj.to_dict()
+                cj_data['execucoes_pendentes'] = 0  # Será implementado com API MongoDB
+                cronjobs_list.append(cj_data)
             
             serializer = CronjobSerializer(cronjobs_list, many=True)
             return Response(serializer.data)
@@ -87,16 +67,7 @@ class CronjobViewSet(viewsets.ViewSet):
         try:
             cj = RoboDockerizado.objects.get(nome=pk, tipo='cronjob')
             cj_data = cj.to_dict()
-            
-            # Buscar execuções
-            exec_cache = CacheService.get_data(CacheKeys.EXECUTIONS, {}) or {}
-            execucoes_pendentes = 0
-            if cj.dependente_de_execucoes:
-                nome_rpa = pk.replace('rpa-cronjob-', '').replace('-cronjob', '')
-                nome_rpa = re.sub(r'-\d+$', '', nome_rpa)
-                execucoes_pendentes = self._buscar_execucoes_por_nome(nome_rpa, exec_cache)
-            
-            cj_data['execucoes_pendentes'] = execucoes_pendentes
+            cj_data['execucoes_pendentes'] = 0
             
             serializer = CronjobSerializer(cj_data)
             return Response(serializer.data)
@@ -116,9 +87,9 @@ class CronjobViewSet(viewsets.ViewSet):
         timezone_str = dados.get('timezone', 'America/Sao_Paulo')
         nome_robo = dados.get('nome_robo', '').strip()
         
-        # Construir docker_image
+        # Construir imagem
         docker_repository = dados.get('docker_repository')
-        docker_tag = dados.get('docker_tag')
+        docker_tag = dados.get('docker_tag', 'latest')
         docker_image = dados.get('docker_image')
         
         if docker_repository and docker_tag:
@@ -137,7 +108,6 @@ class CronjobViewSet(viewsets.ViewSet):
         tags = dados.get('tags', []) or []
         dependente_de_execucoes = dados.get('dependente_de_execucoes', True)
         
-        # Adicionar tag padrão
         if not isinstance(tags, list):
             tags = []
         if 'Agendado' not in tags:
@@ -145,7 +115,7 @@ class CronjobViewSet(viewsets.ViewSet):
         
         try:
             # Salvar no banco de dados
-            cronjob = RoboDockerizado.objects.create(
+            cronjob_db = RoboDockerizado.objects.create(
                 nome=nome,
                 tipo='cronjob',
                 schedule=schedule,
@@ -161,56 +131,27 @@ class CronjobViewSet(viewsets.ViewSet):
                 suspended=False
             )
             
-            # Gerar YAML dinamicamente
-            env_section = ""
-            if nome_robo:
-                env_section = f"""
-              env:
-                - name: NOME_ROBO
-                  value: "{nome_robo}" """
+            # Criar no Kubernetes via API nativa
+            env = {'NOME_ROBO': nome_robo} if nome_robo else None
             
-            yaml_content = f"""apiVersion: batch/v1
-kind: CronJob
-metadata:
-  name: {nome}
-spec:
-  schedule: "{schedule}"
-  timeZone: "{timezone_str}"
-  jobTemplate:
-    spec:
-      ttlSecondsAfterFinished: {ttl_seconds}
-      template:
-        spec:
-          imagePullSecrets:
-            - name: docker-hub-secret
-          containers:
-            - name: rpa
-              image: {docker_image}
-              imagePullPolicy: Always{env_section}
-              resources:
-                limits:
-                  memory: "{memory_limit}"
-          restartPolicy: Never
-"""
+            result = self.cronjob_service.create(
+                name=nome,
+                schedule=schedule,
+                image=docker_image,
+                memory_limit=memory_limit,
+                labels={'nome_robo': nome_robo.lower()} if nome_robo else None,
+                env=env,
+                timezone=timezone_str,
+                ttl_seconds=ttl_seconds
+            )
             
-            # Aplicar YAML diretamente via stdin
-            cronjob_dict = yaml.safe_load(yaml_content)
-            yaml_formatted = yaml.dump(cronjob_dict, default_flow_style=False)
-            
-            cmd = f"kubectl create -f - <<EOF\n{yaml_formatted}\nEOF"
-            return_code, stdout, stderr = self.k8s_service.ssh_service.execute_command(cmd, timeout=30)
-            
-            if return_code != 0:
-                logger.error(f"Erro ao criar cronjob: {stderr}")
-                cronjob.delete()
+            if not result:
+                logger.error(f"Erro ao criar cronjob no Kubernetes")
+                cronjob_db.delete()
                 return Response(
-                    {'error': f'Erro ao criar cronjob no Kubernetes: {stderr}'}, 
+                    {'error': 'Erro ao criar cronjob no Kubernetes'}, 
                     status=status.HTTP_500_INTERNAL_SERVER_ERROR
                 )
-            
-            # Invalidar cache
-            CacheService.update(CacheKeys.CRONJOBS, None)
-            CacheService.update(CacheKeys.CRONJOBS_PROCESSED, None)
             
             return Response({'message': 'Cronjob criado com sucesso'}, status=status.HTTP_201_CREATED)
         except Exception as e:
@@ -221,8 +162,8 @@ spec:
     def destroy(self, request, pk=None):
         """Deleta um cronjob do banco e Kubernetes."""
         try:
-            # Deletar do Kubernetes
-            success = self.k8s_service.delete_cronjob(pk)
+            # Deletar do Kubernetes via API nativa
+            success = self.cronjob_service.delete(pk)
             
             if success:
                 # Marcar como inativo no banco
@@ -234,10 +175,6 @@ spec:
                 except RoboDockerizado.DoesNotExist:
                     pass
                 
-                # Invalidar cache
-                CacheService.update(CacheKeys.CRONJOBS, None)
-                CacheService.update(CacheKeys.CRONJOBS_PROCESSED, None)
-                
                 return Response({'message': 'Cronjob deletado com sucesso'}, status=status.HTTP_200_OK)
             else:
                 return Response({'error': 'Erro ao deletar cronjob do Kubernetes'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -248,7 +185,7 @@ spec:
     @action(detail=True, methods=['post'])
     def run_now(self, request, pk=None):
         """Executa um cronjob manualmente agora."""
-        success = self.k8s_service.create_job_from_cronjob(pk)
+        success = self.cronjob_service.trigger_now(pk)
         
         if success:
             return Response({'message': 'Job criado a partir do cronjob com sucesso'}, status=status.HTTP_200_OK)
@@ -259,26 +196,19 @@ spec:
     @action(detail=True, methods=['post'])
     def standby(self, request, pk=None):
         """Suspende um cronjob e finaliza jobs ativos."""
-        # Suspender cronjob no Kubernetes
-        success = self.k8s_service.suspend_cronjob(pk)
+        # Suspender cronjob
+        success = self.cronjob_service.suspend(pk)
         
         # Deletar jobs ativos deste cronjob
         jobs_deletados = 0
         try:
-            jobs_cache = CacheService.get_data(CacheKeys.JOBS, []) or []
-            if not jobs_cache:
-                jobs_cache = self.k8s_service.get_jobs()
+            jobs = self.job_service.list()
             
-            # Filtrar jobs deste cronjob (jobs criados por cronjobs têm o nome do cronjob como prefixo)
-            for job in jobs_cache:
-                job_name = job.get('name', '')
-                # Jobs criados por cronjobs geralmente têm formato: cronjob-name-1234567
-                if job_name.startswith(pk + '-'):
-                    # Deletar job
-                    job_success = self.k8s_service.delete_job(job_name)
-                    if job_success:
+            for job in jobs:
+                if job.name.startswith(pk + '-'):
+                    if self.job_service.delete(job.name, job.namespace):
                         jobs_deletados += 1
-                        logger.info(f"Job {job_name} deletado (Cronjob {pk} em standby)")
+                        logger.info(f"Job {job.name} deletado (Cronjob {pk} em standby)")
             
             logger.info(f"{jobs_deletados} job(s) deletado(s) ao suspender Cronjob {pk}")
         except Exception as e:
@@ -296,8 +226,6 @@ spec:
             except RoboDockerizado.DoesNotExist:
                 pass
             
-            CacheService.update(CacheKeys.CRONJOBS_PROCESSED, None)
-            CacheService.update(CacheKeys.JOBS, None)
             return Response({
                 'message': f'Cronjob suspenso. {jobs_deletados} job(s) finalizado(s).',
                 'jobs_deletados': jobs_deletados
@@ -308,7 +236,7 @@ spec:
     @action(detail=True, methods=['post'])
     def activate(self, request, pk=None):
         """Reativa um cronjob."""
-        success = self.k8s_service.unsuspend_cronjob(pk)
+        success = self.cronjob_service.resume(pk)
         
         if success:
             # Atualizar no banco
@@ -322,19 +250,6 @@ spec:
             except RoboDockerizado.DoesNotExist:
                 pass
             
-            CacheService.update(CacheKeys.CRONJOBS_PROCESSED, None)
             return Response({'message': 'Cronjob reativado com sucesso'}, status=status.HTTP_200_OK)
         else:
             return Response({'error': 'Erro ao reativar cronjob'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-    def _buscar_execucoes_por_nome(self, nome_rpa: str, exec_cache):
-        if not isinstance(exec_cache, dict):
-            return 0
-        execucoes = exec_cache.get(nome_rpa, [])
-        if execucoes:
-            return len(execucoes)
-        nome_normalizado = nome_rpa.replace('-', '').replace('_', '').lower()
-        for nome_db, execs in exec_cache.items():
-            if nome_normalizado == nome_db.replace('-', '').replace('_', '').lower():
-                return len(execs)
-        return 0

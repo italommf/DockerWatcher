@@ -32,11 +32,13 @@ class JobService:
             if namespace:
                 result = self.client.batch.list_namespaced_job(
                     namespace=namespace,
-                    label_selector=labels
+                    label_selector=labels,
+                    _request_timeout=5
                 )
             else:
                 result = self.client.batch.list_job_for_all_namespaces(
-                    label_selector=labels
+                    label_selector=labels,
+                    _request_timeout=5
                 )
             
             return [self._parse_job(j) for j in result.items]

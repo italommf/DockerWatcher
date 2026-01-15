@@ -71,6 +71,7 @@ class Job:
     """Representação de um Job."""
     name: str
     namespace: str
+    completions: int = 0
     active: int = 0
     succeeded: int = 0
     failed: int = 0
@@ -85,6 +86,7 @@ class Job:
         return {
             'name': self.name,
             'namespace': self.namespace,
+            'completions': self.completions,
             'active': self.active,
             'succeeded': self.succeeded,
             'failed': self.failed,

@@ -23,9 +23,9 @@ class DeploymentService:
         """Lista deployments."""
         try:
             if namespace:
-                result = self.client.apps.list_namespaced_deployment(namespace=namespace)
+                result = self.client.apps.list_namespaced_deployment(namespace=namespace, _request_timeout=5)
             else:
-                result = self.client.apps.list_deployment_for_all_namespaces()
+                result = self.client.apps.list_deployment_for_all_namespaces(_request_timeout=5)
             
             return [self._parse_deployment(d) for d in result.items]
         

@@ -14,11 +14,10 @@ export const useDashboardCache = () => {
 export const DashboardCacheProvider = ({ children }) => {
   // Estados para cache dos dados
   const [cachedData, setCachedData] = useState({
-    rpas: null,
-    cronjobs: null,
-    deployments: null,
-    failedPods: null,
-    executions: null,
+    pods: [],
+    jobs: [],
+    failedPods: [],
+    executions: [],
     robots: [],
     stats: {
       instanciasAtivas: 0,
@@ -724,8 +723,8 @@ export const DashboardCacheProvider = ({ children }) => {
           rpas: dashboardData.full_data?.rpas || prev.rpas,
           cronjobs: cronjobsCompleto.length > 0 ? cronjobsCompleto : prev.cronjobs,
           deployments: dashboardData.full_data?.deployments || prev.deployments,
-          failedPods: dashboardData.full_data?.failed_pods || prev.failedPods || [],
-          executions: dashboardData.full_data?.executions || prev.executions || [],
+          pods: dashboardData.pods || prev.pods || [],
+          jobs: dashboardData.jobs || prev.jobs || [],
           robots: robotsList.length > 0 ? robotsList : prev.robots,
           vmResources: vmResources || prev.vmResources,
           stats: {
@@ -884,31 +883,9 @@ export const DashboardCacheProvider = ({ children }) => {
           await loadDashboardDataFast(isConnected, true)
         }
 
-        // Check connection every 2 seconds for faster recovery
-        dataIntervalRef.current = setInterval(async () => {
-          const intervalId = `INTERVAL-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
-          try {
-            const status = await api.getConnectionStatus()
-            const isConnected = status.k8s_connected && status.mysql_connected
-            if (isConnected) {
-              await loadDashboardDataFast(isConnected)
-            }
-          } catch (error) {
-            console.error(`[${intervalId}] Erro ao atualizar dados do dashboard:`, error.message)
-          }
-        }, 3000)
-
-        resourcesIntervalRef.current = setInterval(async () => {
-          try {
-            const status = await api.getConnectionStatus()
-            const isConnected = status.k8s_connected && status.mysql_connected
-            if (isConnected) {
-              await loadVMResources(isConnected)
-            }
-          } catch (error) {
-            // Silencioso
-          }
-        }, 10000) // Recursos da VM a cada 10s está OK
+        // REMOVIDO: setInterval de polling agressivo.
+        // Agora confiamos apenas no SSE para atualizações em tempo real.
+        // E no getConnectionStatus apenas se houver falha de rede detectada.
       } catch (error) {
         console.error('Erro ao verificar conexão inicial:', error)
       }

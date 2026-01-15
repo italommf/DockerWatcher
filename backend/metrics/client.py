@@ -3,6 +3,7 @@ Cliente Prometheus para queries PromQL.
 """
 
 import logging
+import time
 from typing import Any, Dict, List, Optional
 from datetime import datetime, timedelta
 
@@ -10,15 +11,15 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-# Flag para indicar que Prometheus está disponível
-PROMETHEUS_AVAILABLE = True
+# Configuração do Circuit Breaker
+CIRCUIT_BREAKER_COOLDOWN = 60  # Segundos para esperar após falha
+_last_fail_time = 0
+_prometheus_available = True
 
 
 class PrometheusClient:
     """
-    Cliente para API do Prometheus.
-    
-    Permite executar queries PromQL para obter métricas em tempo real ou histórico.
+    Cliente para API do Prometheus com Circuit Breaker.
     """
     
     def __init__(self, url: str = None):
@@ -41,6 +42,25 @@ class PrometheusClient:
         
         logger.info(f"PrometheusClient inicializado: {self.url}")
     
+    def _check_circuit(self) -> bool:
+        """Verifica se o circuit breaker está aberto."""
+        global _prometheus_available, _last_fail_time
+        if not _prometheus_available:
+            if time.time() - _last_fail_time > CIRCUIT_BREAKER_COOLDOWN:
+                logger.info("Tentando reconectar ao Prometheus (Circuit Breaker Cooldown encerrado)")
+                _prometheus_available = True
+                return True
+            return False
+        return True
+
+    def _report_fail(self):
+        """Reporta falha e abre o circuit breaker."""
+        global _prometheus_available, _last_fail_time
+        if _prometheus_available:
+            logger.warning(f"Abrindo Circuit Breaker para Prometheus em {self.url}")
+            _prometheus_available = False
+            _last_fail_time = time.time()
+
     def query(self, promql: str) -> List[Dict]:
         """
         Executa query PromQL instantânea.
@@ -51,23 +71,25 @@ class PrometheusClient:
         Returns:
             Lista de resultados
         """
+        if not self._check_circuit():
+            return []
+            
         try:
             response = requests.get(
                 f"{self.url}/api/v1/query",
                 params={"query": promql},
-                timeout=10
+                timeout=1.0  # Timeout agressivo para query instantânea
             )
             response.raise_for_status()
             
             data = response.json()
             if data.get('status') == 'success':
                 return data.get('data', {}).get('result', [])
-            else:
-                logger.warning(f"Query falhou: {data.get('error')}")
-                return []
+            return []
         
         except requests.RequestException as e:
             logger.error(f"Erro ao executar query Prometheus: {e}")
+            self._report_fail()
             return []
     
     def query_range(
@@ -89,6 +111,9 @@ class PrometheusClient:
         Returns:
             Lista de séries temporais
         """
+        if not self._check_circuit():
+            return []
+            
         if not end:
             end = datetime.now()
         if not start:
@@ -103,27 +128,33 @@ class PrometheusClient:
                     "end": end.timestamp(),
                     "step": step
                 },
-                timeout=30
+                timeout=5.0  # Timeout para range
             )
             response.raise_for_status()
             
             data = response.json()
             if data.get('status') == 'success':
                 return data.get('data', {}).get('result', [])
-            else:
-                logger.warning(f"Query range falhou: {data.get('error')}")
-                return []
+            return []
         
         except requests.RequestException as e:
             logger.error(f"Erro ao executar query_range Prometheus: {e}")
+            self._report_fail()
             return []
     
     def is_available(self) -> bool:
-        """Verifica se Prometheus está disponível."""
+        """Verifica se Prometheus está disponível (usa circuit breaker)."""
+        if not self._check_circuit():
+            return False
+            
         try:
-            response = requests.get(f"{self.url}/-/healthy", timeout=5)
-            return response.status_code == 200
+            response = requests.get(f"{self.url}/-/healthy", timeout=1.0)
+            available = response.status_code == 200
+            if not available:
+                self._report_fail()
+            return available
         except:
+            self._report_fail()
             return False
     
     def get_scalar(self, promql: str) -> Optional[float]:

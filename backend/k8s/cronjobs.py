@@ -24,9 +24,9 @@ class CronJobService:
         """Lista cronjobs."""
         try:
             if namespace:
-                result = self.client.batch.list_namespaced_cron_job(namespace=namespace)
+                result = self.client.batch.list_namespaced_cron_job(namespace=namespace, _request_timeout=5)
             else:
-                result = self.client.batch.list_cron_job_for_all_namespaces()
+                result = self.client.batch.list_cron_job_for_all_namespaces(_request_timeout=5)
             
             return [self._parse_cronjob(cj) for cj in result.items]
         

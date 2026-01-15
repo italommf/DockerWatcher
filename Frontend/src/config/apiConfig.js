@@ -1,10 +1,17 @@
 // Configuração da API - URL do backend
-const DEFAULT_API_URL = 'http://localhost:8000'
+const DEFAULT_API_URL = 'http://127.0.0.1:8000'
 
 // Função para obter URL da API do localStorage ou usar padrão
 export function getApiUrl() {
   try {
-    const savedUrl = localStorage.getItem('api_base_url')
+    let savedUrl = localStorage.getItem('api_base_url')
+
+    // Migração automática: localhost causa problemas no Windows/SSE
+    if (savedUrl && savedUrl.includes('localhost')) {
+      savedUrl = savedUrl.replace('localhost', '127.0.0.1')
+      localStorage.setItem('api_base_url', savedUrl)
+    }
+
     if (savedUrl) {
       return savedUrl
     }

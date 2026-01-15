@@ -3,13 +3,18 @@ Métricas da VM host via Prometheus (node-exporter).
 """
 
 import logging
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
+from concurrent.futures import ThreadPoolExecutor
 
 from metrics.client import get_prometheus_client, PrometheusClient
 
 logger = logging.getLogger(__name__)
+
+# Executor para queries de métricas
+_metrics_executor = ThreadPoolExecutor(max_workers=3)
 
 
 @dataclass
@@ -25,9 +30,7 @@ class VMMetrics:
     
     def to_dict(self) -> dict:
         return {
-            'cpu': {
-                'usage_percent': round(self.cpu_usage_percent, 2),
-            },
+            'cpu': {'usage_percent': round(self.cpu_usage_percent, 2)},
             'memory': {
                 'total_gb': round(self.memory_total_gb, 2),
                 'used_gb': round(self.memory_used_gb, 2),
@@ -69,10 +72,19 @@ class VMMetricsService:
         Returns:
             VMMetrics com CPU, memória e disco
         """
+        if not self.prom.is_available():
+            return None
+            
         try:
-            cpu = self.cpu_usage()
-            memory = self.memory_usage()
-            disk = self.disk_usage()
+            # Executar as 3 queries em paralelo
+            f_cpu = _metrics_executor.submit(self.cpu_usage)
+            f_memory = _metrics_executor.submit(self.memory_usage)
+            f_disk = _metrics_executor.submit(self.disk_usage)
+            
+            # Timeout de 2s para o conjunto de métricas
+            cpu = f_cpu.result(timeout=2)
+            memory = f_memory.result(timeout=2)
+            disk = f_disk.result(timeout=2)
             
             return VMMetrics(
                 cpu_usage_percent=cpu or 0,
@@ -164,13 +176,7 @@ class VMMetricsService:
         
         if result and len(result) > 0:
             values = result[0].get('values', [])
-            return [
-                {
-                    'timestamp': datetime.fromtimestamp(float(v[0])).isoformat(),
-                    'usage_percent': round(float(v[1]), 2)
-                }
-                for v in values
-            ]
+            return [{'timestamp': datetime.fromtimestamp(float(v[0])).isoformat(), 'usage_percent': round(float(v[1]), 2)} for v in values]
         
         return []
     
@@ -189,12 +195,6 @@ class VMMetricsService:
         
         if result and len(result) > 0:
             values = result[0].get('values', [])
-            return [
-                {
-                    'timestamp': datetime.fromtimestamp(float(v[0])).isoformat(),
-                    'usage_percent': round(float(v[1]), 2)
-                }
-                for v in values
-            ]
+            return [{'timestamp': datetime.fromtimestamp(float(v[0])).isoformat(), 'usage_percent': round(float(v[1]), 2)} for v in values]
         
         return []

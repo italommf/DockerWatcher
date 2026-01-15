@@ -28,6 +28,7 @@ import {
 } from '@mui/icons-material'
 import api from '../services/api'
 import { useSnackbar } from 'notistack'
+import { useSSEData } from '../context/SSEContext'
 import TerminalView from '../components/TerminalView'
 
 // Componente para exibir o card de um Job
@@ -138,19 +139,28 @@ const JobCard = ({ job, onStop, onViewLogs }) => {
           <Typography variant="h6" component="div" sx={{
             fontSize: '1rem',
             fontWeight: '700',
-            lineHeight: 1.3,
-            mb: 0.5,
+            lineHeight: 1.2,
+            mb: 0.2,
             color: '#F8FAFC',
             overflow: 'hidden',
             textOverflow: 'ellipsis',
             whiteSpace: 'nowrap',
             pr: 2,
             fontFamily: "'Inter', sans-serif"
-          }} title={job.name}>
+          }} title={job.apelido || job.name}>
+            {job.apelido || job.name}
+          </Typography>
+          <Typography variant="caption" sx={{
+            color: '#94A3B8',
+            fontFamily: 'monospace',
+            fontSize: '0.7rem',
+            display: 'block',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap'
+          }}>
             {job.name}
           </Typography>
-          {/* ID Removed per user request */}
-          {/* <Typography variant="caption" sx={{...}}>...</Typography> */}
         </Box>
 
         {/* Info Grid */}
@@ -266,8 +276,7 @@ const JobCard = ({ job, onStop, onViewLogs }) => {
 }
 
 export default function Jobs({ isConnected = true, onReconnect }) {
-  const [jobs, setJobs] = useState([])
-  const [loading, setLoading] = useState(true)
+  const { jobsData, isConnected: sseConnected } = useSSEData()
   const [searchTerm, setSearchTerm] = useState('')
   const [filterStatus, setFilterStatus] = useState('all') // all, running, pending, error
   const [logViewerOpen, setLogViewerOpen] = useState(false)
@@ -275,34 +284,24 @@ export default function Jobs({ isConnected = true, onReconnect }) {
 
   const { enqueueSnackbar } = useSnackbar()
 
-  // Função para carregar jobs
-  const loadJobs = async () => {
-    if (!isConnected) return
-
-    try {
-      setLoading(true)
-      const data = await api.getJobs()
-      setJobs(Array.isArray(data) ? data : [])
-    } catch (error) {
-      console.error('Erro ao carregar jobs:', error)
-      if (isConnected) {
-        enqueueSnackbar('Erro ao carregar lista de containers', { variant: 'error' })
-      }
-    } finally {
-      setLoading(false)
+  // Priorizar dados do SSE
+  const jobs = useMemo(() => {
+    if (sseConnected && jobsData?.pods) {
+      return jobsData.pods.map(p => ({
+        id: p.name,
+        name: p.name,
+        apelido: p.apelido,
+        status: p.phase,
+        start_time: p.start_time,
+        image: p.containers?.[0]?.image || '',
+        namespace: p.namespace,
+        pod_name: p.name
+      }))
     }
-  }
+    return []
+  }, [jobsData, sseConnected])
 
-  // Efeito para carregar jobs inicial e periodicamente
-  useEffect(() => {
-    if (isConnected) {
-      loadJobs()
-      const interval = setInterval(loadJobs, 5000) // Atualiza a cada 5 segundos
-      return () => clearInterval(interval)
-    } else {
-      setLoading(false)
-    }
-  }, [isConnected])
+  const loading = sseConnected && !jobsData
 
   // Filtragem de jobs
   const filteredJobs = useMemo(() => {
@@ -332,8 +331,7 @@ export default function Jobs({ isConnected = true, onReconnect }) {
     try {
       await api.stopJob(job.name)
       enqueueSnackbar(`Solicitado parada do container ${job.name}`, { variant: 'success' })
-      // Atualizar lista após um breve delay
-      setTimeout(loadJobs, 1000)
+      // Com SSE não precisamos recarregar manualmente, o backend enviará o evento
     } catch (error) {
       console.error('Erro ao parar job:', error)
       enqueueSnackbar(`Erro ao parar container: ${error.message}`, { variant: 'error' })
@@ -414,11 +412,14 @@ export default function Jobs({ isConnected = true, onReconnect }) {
                 <Button
                   variant="outlined"
                   startIcon={<RefreshIcon />}
-                  onClick={loadJobs}
+                  onClick={() => {
+                    // Se usar SSE, o refresh pode apenas 'piscar' o status ou ser ignorado
+                    enqueueSnackbar('Atualização automática via SSE ativa', { variant: 'info' })
+                  }}
                   disabled={loading}
                   sx={{ color: '#fff', borderColor: 'rgba(255,255,255,0.5)', '&:hover': { borderColor: '#fff', bgcolor: 'rgba(255,255,255,0.1)' } }}
                 >
-                  Atualizar
+                  SSE Ativo
                 </Button>
               </Box>
             </Box>

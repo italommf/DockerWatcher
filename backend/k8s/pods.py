@@ -33,11 +33,13 @@ class PodService:
             if namespace:
                 result = self.client.core.list_namespaced_pod(
                     namespace=namespace,
-                    label_selector=labels
+                    label_selector=labels,
+                    _request_timeout=5
                 )
             else:
                 result = self.client.core.list_pod_for_all_namespaces(
-                    label_selector=labels
+                    label_selector=labels,
+                    _request_timeout=5
                 )
             
             return [self._parse_pod(p) for p in result.items]

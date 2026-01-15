@@ -57,15 +57,19 @@ export const SSEProvider = ({ children }) => {
             }
 
             eventSource.onerror = (e) => {
-                console.error('[SSE] Dashboard erro:', e)
+                // EventSource error doesn't provide much info in the event itself
+                // but we know it's a connection issue.
                 setIsConnected(false)
-                setError('Conexão SSE perdida')
+                setError('Conexão SSE suspenda ou backend fora do ar')
                 eventSource.close()
 
-                // Reconectar após 3 segundos
+                // Reconectar com backoff simples para não inundar o servidor se ele estiver caindo
+                const delay = 5000
+                console.warn(`[SSE] Dashboard erro. Tentando reconectar em ${delay / 1000}s...`)
+
                 reconnectTimeoutRef.current = setTimeout(() => {
                     connectDashboard()
-                }, 3000)
+                }, delay)
             }
         } catch (e) {
             console.error('[SSE] Erro ao criar EventSource:', e)
@@ -102,13 +106,12 @@ export const SSEProvider = ({ children }) => {
             }
 
             eventSource.onerror = (e) => {
-                console.error('[SSE] Jobs erro:', e)
                 eventSource.close()
-
-                // Reconectar após 3 segundos
+                const delay = 5000
+                console.warn(`[SSE] Jobs erro. Tentando reconectar em ${delay / 1000}s...`)
                 setTimeout(() => {
                     connectJobs()
-                }, 3000)
+                }, delay)
             }
         } catch (e) {
             console.error('[SSE] Erro ao criar Jobs EventSource:', e)

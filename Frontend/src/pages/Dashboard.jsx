@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import {
   Box,
   Grid,
@@ -27,6 +27,7 @@ import {
 import api from '../services/api'
 import { useSnackbar } from 'notistack'
 import { useDashboardCache } from '../context/DashboardCacheContext'
+import { useSSEData } from '../context/SSEContext'
 import ResourceAreaChart from '../components/ResourceAreaChart'
 import ContainerResourcesList from '../components/ContainerResourcesList'
 
@@ -117,7 +118,7 @@ function calcularProximaExecucao(schedule) {
       const step = minutoParsed.step
       const minutoAtual = now.getMinutes()
       const proximoMinuto = Math.ceil((minutoAtual + 1) / step) * step
-      
+
       if (proximoMinuto < 60) {
         proxima.setMinutes(proximoMinuto)
         proxima.setHours(now.getHours())
@@ -154,7 +155,7 @@ function calcularProximaExecucao(schedule) {
     if (minutoParsed?.type === 'list') {
       const minutoAtual = now.getMinutes()
       const proximoMinutoValido = minutoParsed.values.find(m => m > minutoAtual) || minutoParsed.values[0]
-      
+
       if (proximoMinutoValido > minutoAtual) {
         proxima.setMinutes(proximoMinutoValido)
         proxima.setHours(now.getHours())
@@ -687,7 +688,10 @@ function LineChart({ title, data, maxValue, unit = 'GB' }) {
 }
 
 export default function Dashboard({ isConnected = true, onReconnect }) {
-  // Usar cache do contexto
+  // SSE para dados em tempo real
+  const { dashboardData, isConnected: sseConnected } = useSSEData()
+
+  // Cache como fallback quando SSE não está conectado
   const { cachedData, refreshData } = useDashboardCache()
 
   // Estados locais apenas para UI
@@ -695,18 +699,93 @@ export default function Dashboard({ isConnected = true, onReconnect }) {
   const [connectionError, setConnectionError] = useState(false)
   const [expandedPanel, setExpandedPanel] = useState('left')
 
-  // Usar dados do cache com fallbacks seguros (evita crashes durante o carregamento inicial quando são null)
-  const stats = cachedData.stats || {}
-  const robots = cachedData.robots || []
-  const cronjobs = cachedData.cronjobs || []
-  const rpas = cachedData.rpas || []
-  const deployments = cachedData.deployments || []
+  // Priorizar dados SSE, fallback para cache
+  // Estatísticas do topo
+  const stats = sseConnected && dashboardData?.stats ? {
+    instanciasAtivas: dashboardData.stats.instancias_ativas || dashboardData.stats.pods_running || 0,
+    execucoesPendentes: dashboardData.stats.execucoes_pendentes || 0,
+    falhasContainers: dashboardData.stats.falhas_containers || 0,
+    rpasAtivos: dashboardData.stats.rpas_ativos || 0,
+    cronjobsAtivos: dashboardData.stats.cronjobs_ativos || 0,
+  } : (cachedData.stats || {})
 
-  const vmResources = cachedData.vmResources || {
+  // Dados de listas - SSE tem prioridade
+  const pods = sseConnected && dashboardData?.pods ? dashboardData.pods : []
+  const jobs = sseConnected && dashboardData?.jobs ? dashboardData.jobs : []
+  const cronjobs = sseConnected && dashboardData?.cronjobs ? dashboardData.cronjobs : (cachedData.cronjobs || [])
+  const deployments = sseConnected && dashboardData?.deployments ? dashboardData.deployments : (cachedData.deployments || [])
+
+  // Consolidar Pods e Jobs em uma única lista de robôs em execução
+  const currentPods = sseConnected && dashboardData?.pods ? dashboardData.pods : (cachedData.pods || [])
+  const currentJobs = sseConnected && dashboardData?.jobs ? dashboardData.jobs : (cachedData.jobs || [])
+
+  const robots = useMemo(() => {
+    const runningRobots = new Map()
+
+    // 1. Processar Pods (prioridade para métricas)
+    currentPods.forEach(p => {
+      if (p.phase !== 'Running') return
+
+      const nomeIdentificacao = p.labels?.nome_robo || p.labels?.app || p.name
+      const apelido = p.apelido || nomeIdentificacao
+
+      if (!runningRobots.has(nomeIdentificacao)) {
+        runningRobots.set(nomeIdentificacao, {
+          nome: apelido,
+          nomeOriginal: p.name,
+          instancias: 1,
+          cpu: p.cpu_millicores || 0,
+          mem: p.memory_mb || 0,
+          status: 'Running',
+          statusColor: 'success',
+          execucoes: 'N/A', // Será preenchido se for RPA
+          tipo: p.labels?.tipo || 'Pod'
+        })
+      } else {
+        const r = runningRobots.get(nomeIdentificacao)
+        r.instancias += 1
+        r.cpu += (p.cpu_millicores || 0)
+        r.mem += (p.memory_mb || 0)
+      }
+    })
+
+    // 2. Processar Jobs (adicionar jobs ativos que talvez não tenham pods running)
+    currentJobs.forEach(j => {
+      if (j.active <= 0) return
+
+      const nomeIdentificacao = j.labels?.nome_robo || j.labels?.app || j.name.replace(/-(manual-)?\d+$/, '')
+
+      if (!runningRobots.has(nomeIdentificacao)) {
+        runningRobots.set(nomeIdentificacao, {
+          nome: j.apelido || nomeIdentificacao,
+          nomeOriginal: j.name,
+          instancias: j.active,
+          cpu: 0,
+          mem: 0,
+          status: 'Iniciando',
+          statusColor: 'warning',
+          execucoes: j.active,
+          tipo: 'Job'
+        })
+      } else {
+        // Se já existe via Pod, apenas garantimos que a contagem de execuções/instâncias faça sentido
+        const r = runningRobots.get(nomeIdentificacao)
+        if (r.status === 'Iniciando' && j.active > 0) {
+          r.instancias = j.active
+        }
+      }
+    })
+
+    return Array.from(runningRobots.values())
+  }, [currentPods, currentJobs])
+
+  const rpas = cachedData.rpas || []
+
+  const vmResources = sseConnected && dashboardData?.vm_metrics ? dashboardData.vm_metrics : (cachedData.vmResources || {
     memoria: { total_gb: 0, livre_gb: 0, usada_gb: 0 },
     armazenamento: { total_gb: 0, livre_gb: 0, usado_gb: 0 },
     cpu: { usado: 0, livre: 100 }
-  }
+  })
   const resourcesHistory = cachedData.resourcesHistory || { memoria: [], armazenamento: [], cpu: [] }
 
   const countdownIntervalRef = useRef(null)
@@ -973,8 +1052,8 @@ export default function Dashboard({ isConnected = true, onReconnect }) {
                 <TableRow>
                   <TableCell sx={{ color: '#FFFFFF', fontWeight: 'bold' }}>Nome</TableCell>
                   <TableCell sx={{ color: '#FFFFFF', fontWeight: 'bold' }}>Instâncias</TableCell>
-                  <TableCell sx={{ color: '#FFFFFF', fontWeight: 'bold' }}>Status</TableCell>
                   <TableCell sx={{ color: '#FFFFFF', fontWeight: 'bold' }}>Execuções</TableCell>
+                  <TableCell sx={{ color: '#FFFFFF', fontWeight: 'bold' }}>Status</TableCell>
                   <TableCell sx={{ color: '#FFFFFF', fontWeight: 'bold' }}>Tipo</TableCell>
                 </TableRow>
               </TableHead>
@@ -994,25 +1073,26 @@ export default function Dashboard({ isConnected = true, onReconnect }) {
                 ) : (
                   robots.map((robot, index) => (
                     <TableRow
-                      key={`${robot.nome}-${index}`}
+                      key={`${robot.podName || robot.nome}-${index}`}
                       sx={{
                         '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.05)' },
                         '& td': { py: 1.5 } // Altura vertical consistente
                       }}
                     >
-                      <TableCell sx={{ color: '#FFFFFF', py: 1.5 }}>{robot.nome}</TableCell>
-                      <TableCell sx={{ color: '#FFFFFF', py: 1.5 }}>{robot.instancias}</TableCell>
-                      <TableCell sx={{ py: 1.5 }}>
-                        <Chip
-                          label={robot.status}
-                          size="small"
-                          sx={{
-                            fontWeight: 600,
-                            bgcolor: robot.statusColor === 'success' ? '#22C55E' :
-                              robot.statusColor === 'error' ? '#EF4444' : '#6B7280',
-                            color: '#FFFFFF',
-                          }}
-                        />
+                      <TableCell sx={{ color: '#FFFFFF', py: 1.5 }}>
+                        <Box sx={{ display: 'flex', flexDirection: 'column' }}>
+                          <Typography variant="body1" sx={{ fontWeight: 600, color: '#F8FAFC' }}>
+                            {robot.nome}
+                          </Typography>
+                          <Typography variant="caption" sx={{ color: '#94A3B8', fontFamily: 'monospace' }}>
+                            {robot.podName}
+                          </Typography>
+                        </Box>
+                      </TableCell>
+                      <TableCell sx={{ color: '#FFFFFF', py: 1.5 }}>
+                        <Typography variant="body2" sx={{ fontWeight: 600, color: '#F8FAFC' }}>
+                          {robot.instancias}
+                        </Typography>
                       </TableCell>
                       <TableCell sx={{ color: '#FFFFFF', py: 1.5 }}>
                         {robot.execucoes === 'Rotina Sem Exec' ? (
@@ -1028,6 +1108,18 @@ export default function Dashboard({ isConnected = true, onReconnect }) {
                         ) : (
                           robot.execucoes
                         )}
+                      </TableCell>
+                      <TableCell sx={{ py: 1.5 }}>
+                        <Chip
+                          label={robot.status}
+                          size="small"
+                          sx={{
+                            fontWeight: 600,
+                            bgcolor: robot.statusColor === 'success' ? '#22C55E' :
+                              robot.statusColor === 'error' ? '#EF4444' : '#6B7280',
+                            color: '#FFFFFF',
+                          }}
+                        />
                       </TableCell>
                       <TableCell sx={{ py: 1.5 }}>
                         {robot.tipo === 'Cronjob' ? (
@@ -1105,7 +1197,7 @@ export default function Dashboard({ isConnected = true, onReconnect }) {
                     proximaExecucao: cj.proximaExecucao,
                     suspended: cj.suspended
                   })))
-                  
+
                   return cronjobs.length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={5} align="center" sx={{ color: '#FFFFFF' }}>
@@ -1114,91 +1206,98 @@ export default function Dashboard({ isConnected = true, onReconnect }) {
                     </TableRow>
                   ) : (
                     cronjobs.map((cronjob) => {
-                    const proximaExecucao = cronjob.proximaExecucao
-                    const horarioFormatado = proximaExecucao
-                      ? proximaExecucao.toLocaleString('pt-BR', {
-                        day: '2-digit',
-                        month: '2-digit',
-                        year: 'numeric',
-                        hour: '2-digit',
-                        minute: '2-digit'
-                      })
-                      : 'N/A'
+                      const proximaExecucao = cronjob.proximaExecucao
+                      const horarioFormatado = proximaExecucao
+                        ? proximaExecucao.toLocaleString('pt-BR', {
+                          day: '2-digit',
+                          month: '2-digit',
+                          year: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit'
+                        })
+                        : 'N/A'
 
-                    const ultimaExecucao = cronjob.last_successful_time || cronjob.last_schedule_time
-                    const ultimaFormatada = ultimaExecucao
-                      ? new Date(ultimaExecucao).toLocaleString('pt-BR', {
-                        day: '2-digit',
-                        month: '2-digit',
-                        year: 'numeric',
-                        hour: '2-digit',
-                        minute: '2-digit'
-                      })
-                      : 'Nunca executado'
+                      const ultimaExecucao = cronjob.last_successful_time || cronjob.last_schedule_time
+                      const ultimaFormatada = ultimaExecucao
+                        ? new Date(ultimaExecucao).toLocaleString('pt-BR', {
+                          day: '2-digit',
+                          month: '2-digit',
+                          year: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit'
+                        })
+                        : 'Nunca executado'
 
-                    return (
-                      <TableRow
-                        key={cronjob.name}
-                        sx={{
-                          '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.05)' },
-                          '& td': { py: 1.5 } // Mesma altura vertical que a tabela de robôs
-                        }}
-                      >
-                        <TableCell sx={{ color: '#FFFFFF', py: 1.5 }}>
-                          {formatarNome(cronjob.name) || 'N/A'}
-                        </TableCell>
-                        <TableCell sx={{ color: '#FFFFFF', py: 1.5 }}>
-                          {cronjob.schedule || 'N/A'}
-                        </TableCell>
-                        <TableCell sx={{ color: '#FFFFFF', py: 1.5 }}>
-                          {proximaExecucao ? (
-                            <ContagemRegressiva dataFutura={proximaExecucao} />
-                          ) : (
-                            'Agendado'
-                          )}
-                        </TableCell>
-                        <TableCell sx={{ color: '#FFFFFF', py: 1.5 }}>
-                          {ultimaFormatada}
-                        </TableCell>
-                        <TableCell sx={{ py: 1.5, verticalAlign: 'middle' }}>
-                          <Button
-                            variant="contained"
-                            size="small"
-                            startIcon={<PlayArrowIcon sx={{ fontSize: '1rem' }} />}
-                            onClick={async () => {
-                              try {
-                                await api.cronjobRunNow(cronjob.name)
-                                enqueueSnackbar('Cronjob executado com sucesso', { variant: 'success' })
-                                // Recarregar dados após alguns segundos
-                                setTimeout(() => {
-                                  loadData(true)
-                                }, 2000)
-                              } catch (error) {
-                                enqueueSnackbar(`Erro ao executar cronjob: ${error.message}`, { variant: 'error' })
-                              }
-                            }}
-                            sx={{
-                              minWidth: 120,
-                              py: 0.25,
-                              px: 1.5,
-                              height: 28,
-                              fontSize: '0.75rem',
-                              lineHeight: 1.2,
-                              background: 'linear-gradient(90deg, #754c99 0%, #8fd0d7 100%)',
-                              color: '#FFFFFF',
-                              fontWeight: 600,
-                              border: 'none',
-                              '&:hover': {
-                                background: 'linear-gradient(90deg, #5f3d7a 0%, #7dc0c7 100%)',
-                              }
-                            }}
-                          >
-                            Iniciar
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    )
-                  })
+                      return (
+                        <TableRow
+                          key={cronjob.name}
+                          sx={{
+                            '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.05)' },
+                            '& td': { py: 1.5 } // Mesma altura vertical que a tabela de robôs
+                          }}
+                        >
+                          <TableCell sx={{ color: '#FFFFFF', py: 1.5 }}>
+                            <Box sx={{ display: 'flex', flexDirection: 'column' }}>
+                              <Typography variant="body1" sx={{ fontWeight: 600, color: '#F8FAFC' }}>
+                                {cronjob.apelido || cronjob.name}
+                              </Typography>
+                              <Typography variant="caption" sx={{ color: '#94A3B8', fontFamily: 'monospace' }}>
+                                {cronjob.name}
+                              </Typography>
+                            </Box>
+                          </TableCell>
+                          <TableCell sx={{ color: '#FFFFFF', py: 1.5 }}>
+                            {cronjob.schedule || 'N/A'}
+                          </TableCell>
+                          <TableCell sx={{ color: '#FFFFFF', py: 1.5 }}>
+                            {proximaExecucao ? (
+                              <ContagemRegressiva dataFutura={proximaExecucao} />
+                            ) : (
+                              'Agendado'
+                            )}
+                          </TableCell>
+                          <TableCell sx={{ color: '#FFFFFF', py: 1.5 }}>
+                            {ultimaFormatada}
+                          </TableCell>
+                          <TableCell sx={{ py: 1.5, verticalAlign: 'middle' }}>
+                            <Button
+                              variant="contained"
+                              size="small"
+                              startIcon={<PlayArrowIcon sx={{ fontSize: '1rem' }} />}
+                              onClick={async () => {
+                                try {
+                                  await api.cronjobRunNow(cronjob.name)
+                                  enqueueSnackbar('Cronjob executado com sucesso', { variant: 'success' })
+                                  // Recarregar dados após alguns segundos
+                                  setTimeout(() => {
+                                    loadData(true)
+                                  }, 2000)
+                                } catch (error) {
+                                  enqueueSnackbar(`Erro ao executar cronjob: ${error.message}`, { variant: 'error' })
+                                }
+                              }}
+                              sx={{
+                                minWidth: 120,
+                                py: 0.25,
+                                px: 1.5,
+                                height: 28,
+                                fontSize: '0.75rem',
+                                lineHeight: 1.2,
+                                background: 'linear-gradient(90deg, #754c99 0%, #8fd0d7 100%)',
+                                color: '#FFFFFF',
+                                fontWeight: 600,
+                                border: 'none',
+                                '&:hover': {
+                                  background: 'linear-gradient(90deg, #5f3d7a 0%, #7dc0c7 100%)',
+                                }
+                              }}
+                            >
+                              Iniciar
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      )
+                    })
                   )
                 })()}
               </TableBody>

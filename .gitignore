@@ -57,3 +57,5 @@ node_modules/
 Frontend/dist/
 Frontend/build/
 Frontend/release/
+frontend_new/node_modules/
+frontend_new/dist/

@@ -77,6 +77,7 @@ class RoboDockerizado(models.Model):
             'ativo': self.ativo,
             'status': self.status,
             'docker_tag': self.docker_tag,
+            'docker_repository': self.docker_repository or '',
             'namespace': self.namespace,
             'tags': self.tags or [],
             'dependente_de_execucoes': self.dependente_de_execucoes,
@@ -87,8 +88,10 @@ class RoboDockerizado(models.Model):
         # Campos específicos por tipo
         if self.tipo == 'rpa':
             base_dict.update({
+                'nome': self.nome,  # Campo principal
                 'nome_rpa': self.nome,  # Compatibilidade
                 'robo_uuid': self.robo_uuid or '',
+                'docker_repository': self.docker_repository or '',
                 'qtd_max_instancias': self.qtd_max_instancias,
                 'qtd_ram_maxima': self.qtd_ram_maxima,
                 'utiliza_arquivos_externos': self.utiliza_arquivos_externos,

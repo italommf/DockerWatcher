@@ -73,6 +73,8 @@ class VMMetricsService:
             VMMetrics com CPU, memória e disco
         """
         if not self.prom.is_available():
+            # Usar debug ao invés de warning para reduzir spam de logs quando Prometheus está offline
+            logger.debug("Prometheus não está disponível (circuit breaker aberto)")
             return None
             
         try:
@@ -82,21 +84,41 @@ class VMMetricsService:
             f_disk = _metrics_executor.submit(self.disk_usage)
             
             # Timeout de 2s para o conjunto de métricas
-            cpu = f_cpu.result(timeout=2)
-            memory = f_memory.result(timeout=2)
-            disk = f_disk.result(timeout=2)
+            cpu = None
+            memory = None
+            disk = None
+            
+            try:
+                cpu = f_cpu.result(timeout=2)
+            except Exception as e:
+                logger.warning(f"Erro ao obter métricas de CPU: {type(e).__name__}: {str(e)}")
+            
+            try:
+                memory = f_memory.result(timeout=2)
+            except Exception as e:
+                logger.warning(f"Erro ao obter métricas de memória: {type(e).__name__}: {str(e)}")
+            
+            try:
+                disk = f_disk.result(timeout=2)
+            except Exception as e:
+                logger.warning(f"Erro ao obter métricas de disco: {type(e).__name__}: {str(e)}")
+            
+            # Se todas falharam, retornar None
+            if cpu is None and memory is None and disk is None:
+                logger.error("Todas as queries de métricas VM falharam")
+                return None
             
             return VMMetrics(
                 cpu_usage_percent=cpu or 0,
-                memory_total_gb=memory.get('total_gb', 0),
-                memory_used_gb=memory.get('used_gb', 0),
-                memory_usage_percent=memory.get('usage_percent', 0),
-                disk_total_gb=disk.get('total_gb', 0),
-                disk_used_gb=disk.get('used_gb', 0),
-                disk_usage_percent=disk.get('usage_percent', 0),
+                memory_total_gb=memory.get('total_gb', 0) if memory else 0,
+                memory_used_gb=memory.get('used_gb', 0) if memory else 0,
+                memory_usage_percent=memory.get('usage_percent', 0) if memory else 0,
+                disk_total_gb=disk.get('total_gb', 0) if disk else 0,
+                disk_used_gb=disk.get('used_gb', 0) if disk else 0,
+                disk_usage_percent=disk.get('usage_percent', 0) if disk else 0,
             )
         except Exception as e:
-            logger.error(f"Erro ao obter métricas da VM: {e}")
+            logger.error(f"Erro ao obter métricas da VM: {type(e).__name__}: {str(e)}", exc_info=True)
             return None
     
     def cpu_usage(self) -> Optional[float]:
@@ -106,13 +128,20 @@ class VMMetricsService:
         Returns:
             Percentual de CPU usado (0-100)
         """
-        # CPU usage = 100% - idle%
-        query = '100 - (avg(irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)'
-        
-        if self.node_name:
-            query = f'100 - (avg(irate(node_cpu_seconds_total{{mode="idle",instance=~".*{self.node_name}.*"}}[5m])) * 100)'
-        
-        return self.prom.get_scalar(query)
+        try:
+            # CPU usage = 100% - idle%
+            query = '100 - (avg(irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)'
+            
+            if self.node_name:
+                query = f'100 - (avg(irate(node_cpu_seconds_total{{mode="idle",instance=~".*{self.node_name}.*"}}[5m])) * 100)'
+            
+            result = self.prom.get_scalar(query)
+            if result is None:
+                logger.debug("Query de CPU retornou None (sem dados disponíveis)")
+            return result
+        except Exception as e:
+            logger.error(f"Erro na query de CPU: {type(e).__name__}: {str(e)}")
+            raise
     
     def memory_usage(self) -> Dict:
         """
@@ -121,19 +150,27 @@ class VMMetricsService:
         Returns:
             Dict com total_gb, used_gb, available_gb, usage_percent
         """
-        node_filter = f',instance=~".*{self.node_name}.*"' if self.node_name else ''
-        
-        total = self.prom.get_scalar(f'node_memory_MemTotal_bytes{{{node_filter.lstrip(",")}}}') or 0
-        available = self.prom.get_scalar(f'node_memory_MemAvailable_bytes{{{node_filter.lstrip(",")}}}') or 0
-        
-        used = total - available
-        
-        return {
-            'total_gb': total / (1024 ** 3),
-            'used_gb': used / (1024 ** 3),
-            'available_gb': available / (1024 ** 3),
-            'usage_percent': (used / total * 100) if total > 0 else 0
-        }
+        try:
+            node_filter = f',instance=~".*{self.node_name}.*"' if self.node_name else ''
+            
+            total = self.prom.get_scalar(f'node_memory_MemTotal_bytes{{{node_filter.lstrip(",")}}}') or 0
+            available = self.prom.get_scalar(f'node_memory_MemAvailable_bytes{{{node_filter.lstrip(",")}}}') or 0
+            
+            if total == 0:
+                logger.warning("Query de memória retornou 0 (sem dados disponíveis)")
+                return {'total_gb': 0, 'used_gb': 0, 'available_gb': 0, 'usage_percent': 0}
+            
+            used = total - available
+            
+            return {
+                'total_gb': total / (1024 ** 3),
+                'used_gb': used / (1024 ** 3),
+                'available_gb': available / (1024 ** 3),
+                'usage_percent': (used / total * 100) if total > 0 else 0
+            }
+        except Exception as e:
+            logger.error(f"Erro na query de memória: {type(e).__name__}: {str(e)}")
+            raise
     
     def disk_usage(self, mountpoint: str = "/") -> Dict:
         """
@@ -145,23 +182,31 @@ class VMMetricsService:
         Returns:
             Dict com total_gb, used_gb, available_gb, usage_percent
         """
-        node_filter = f',instance=~".*{self.node_name}.*"' if self.node_name else ''
-        
-        total = self.prom.get_scalar(
-            f'node_filesystem_size_bytes{{mountpoint="{mountpoint}"{node_filter}}}'
-        ) or 0
-        available = self.prom.get_scalar(
-            f'node_filesystem_avail_bytes{{mountpoint="{mountpoint}"{node_filter}}}'
-        ) or 0
-        
-        used = total - available
-        
-        return {
-            'total_gb': total / (1024 ** 3),
-            'used_gb': used / (1024 ** 3),
-            'available_gb': available / (1024 ** 3),
-            'usage_percent': (used / total * 100) if total > 0 else 0
-        }
+        try:
+            node_filter = f',instance=~".*{self.node_name}.*"' if self.node_name else ''
+            
+            total = self.prom.get_scalar(
+                f'node_filesystem_size_bytes{{mountpoint="{mountpoint}"{node_filter}}}'
+            ) or 0
+            available = self.prom.get_scalar(
+                f'node_filesystem_avail_bytes{{mountpoint="{mountpoint}"{node_filter}}}'
+            ) or 0
+            
+            if total == 0:
+                logger.warning(f"Query de disco retornou 0 para {mountpoint} (sem dados disponíveis)")
+                return {'total_gb': 0, 'used_gb': 0, 'available_gb': 0, 'usage_percent': 0}
+            
+            used = total - available
+            
+            return {
+                'total_gb': total / (1024 ** 3),
+                'used_gb': used / (1024 ** 3),
+                'available_gb': available / (1024 ** 3),
+                'usage_percent': (used / total * 100) if total > 0 else 0
+            }
+        except Exception as e:
+            logger.error(f"Erro na query de disco: {type(e).__name__}: {str(e)}")
+            raise
     
     def cpu_history(self, hours: int = 1, step: str = "1m") -> List[Dict]:
         """

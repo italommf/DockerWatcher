@@ -144,10 +144,18 @@ class WatcherService:
             logger.info(f"RPA {nome}: {len(execucoes)} execuções, {jobs_ativos}/{qtd_max} jobs. Criando...")
             
             try:
+                # Validar que o repositório foi fornecido
+                if not rpa.docker_repository:
+                    logger.warning(f"RPA {nome}: docker_repository não fornecido, pulando criação de job")
+                    continue
+                
+                # Construir imagem Docker
+                docker_image = f"{rpa.docker_repository}:{rpa.docker_tag or 'latest'}"
+                
                 # Criar job via API nativa
                 job = self.job_service.create(
                     name=f"rpa-job-{nome.replace('_', '-').lower()}",
-                    image=f"rpaglobal/{nome.lower()}:{rpa.docker_tag or 'latest'}",
+                    image=docker_image,
                     memory_limit=f"{rpa.qtd_ram_maxima or 256}Mi",
                     labels={'nome_robo': nome_lower},
                     env={'NOME_ROBO': nome_lower},

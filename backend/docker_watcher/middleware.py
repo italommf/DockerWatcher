@@ -38,23 +38,31 @@ class RequestLoggingMiddleware:
             # Calcular tempo de resposta
             elapsed = time.time() - start_time
             
-            # Log de resposta
-            status_code = response.status_code
-            if elapsed > self.slow_request_threshold:
-                logger.warning(
-                    f"[{request_id}] {method} {full_path} - "
-                    f"REQUISIÇÃO LENTA: {elapsed:.3f}s (threshold: {self.slow_request_threshold}s) - "
-                    f"Status: {status_code}"
-                )
-            else:
-                logger.info(
-                    f"[{request_id}] {method} {full_path} - "
-                    f"Concluída em {elapsed:.3f}s - Status: {status_code}"
-                )
+            # Para StreamingHttpResponse (SSE), não fazer log detalhado pois a resposta é contínua
+            is_streaming = hasattr(response, 'streaming_content') and response.streaming_content
             
-            # Adicionar header com request ID para depuração
-            response['X-Request-ID'] = request_id
-            response['X-Response-Time'] = f"{elapsed:.3f}"
+            if is_streaming:
+                # Para SSE, apenas log inicial
+                logger.info(f"[{request_id}] {method} {full_path} - SSE stream iniciado")
+                response['X-Request-ID'] = request_id
+            else:
+                # Log de resposta normal
+                status_code = response.status_code
+                if elapsed > self.slow_request_threshold:
+                    logger.warning(
+                        f"[{request_id}] {method} {full_path} - "
+                        f"REQUISIÇÃO LENTA: {elapsed:.3f}s (threshold: {self.slow_request_threshold}s) - "
+                        f"Status: {status_code}"
+                    )
+                else:
+                    logger.info(
+                        f"[{request_id}] {method} {full_path} - "
+                        f"Concluída em {elapsed:.3f}s - Status: {status_code}"
+                    )
+                
+                # Adicionar header com request ID para depuração
+                response['X-Request-ID'] = request_id
+                response['X-Response-Time'] = f"{elapsed:.3f}"
             
             return response
             

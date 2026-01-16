@@ -15,8 +15,11 @@ prometheus:
     # Expor via NodePort para acesso externo se necessário
     # serviceMonitorSelectorNilUsesHelmValues: false
   service:
-    type: NodePort
-    nodePort: 30090
+    # Para desenvolvimento local com kind/Docker Desktop, usar LoadBalancer
+    # LoadBalancer funciona melhor com Docker Desktop e expõe via localhost
+    type: LoadBalancer
+    # Se usar NodePort, descomente a linha abaixo
+    # nodePort: 30090
 
 # Grafana
 grafana:

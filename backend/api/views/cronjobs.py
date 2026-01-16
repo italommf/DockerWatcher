@@ -115,6 +115,8 @@ class CronjobViewSet(viewsets.ViewSet):
         
         try:
             # Salvar no banco de dados
+            robo_uuid = dados.get('robo_uuid', '').strip()
+            
             cronjob_db = RoboDockerizado.objects.create(
                 nome=nome,
                 tipo='cronjob',
@@ -124,6 +126,7 @@ class CronjobViewSet(viewsets.ViewSet):
                 docker_repository=docker_repository or docker_image.split(':')[0],
                 memory_limit=memory_limit,
                 ttl_seconds_after_finished=ttl_seconds,
+                robo_uuid=robo_uuid,
                 ativo=True,
                 apelido=apelido,
                 tags=tags,
@@ -152,6 +155,16 @@ class CronjobViewSet(viewsets.ViewSet):
                     {'error': 'Erro ao criar cronjob no Kubernetes'}, 
                     status=status.HTTP_500_INTERNAL_SERVER_ERROR
                 )
+            
+            # Processar execuções pendentes imediatamente após criar (apenas se for dependente de execuções)
+            if dependente_de_execucoes and robo_uuid:
+                try:
+                    from api.utils_robo import processar_execucoes_apos_criacao
+                    resultado = processar_execucoes_apos_criacao(cronjob_db)
+                    if resultado['jobs_criados'] > 0:
+                        logger.info(f"Cronjob {cronjob_db.nome} criado: {resultado['jobs_criados']} job(s) criado(s) de {resultado['execucoes_encontradas']} execuções pendentes")
+                except Exception as e:
+                    logger.warning(f"Erro ao processar execuções após criar Cronjob {cronjob_db.nome}: {e}")
             
             return Response({'message': 'Cronjob criado com sucesso'}, status=status.HTTP_201_CREATED)
         except Exception as e:

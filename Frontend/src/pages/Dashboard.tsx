@@ -7,13 +7,13 @@ import {
     AlertTriangle,
     CheckCircle,
     XCircle,
-    Loader2,
     Zap
 } from 'lucide-react';
 import { Header } from '../components/layout/Header';
 import { useSSE } from '../hooks/useSSE';
 import { getDashboard } from '../services/api';
 import type { DashboardData, RobotRunning } from '../types';
+import { useSnackbar } from 'notistack';
 
 interface StatCardProps {
     title: string;
@@ -142,8 +142,8 @@ function RobotsTable({ robots }: { robots: RobotRunning[] }) {
 }
 
 export function Dashboard() {
+    const { enqueueSnackbar } = useSnackbar();
     const [data, setData] = useState<DashboardData | null>(null);
-    const [loading, setLoading] = useState(true);
 
     const { data: sseData, connected } = useSSE({
         url: '/api/stream/dashboard/',
@@ -159,12 +159,11 @@ export function Dashboard() {
                 setData(dashboardData);
             } catch (error) {
                 console.error('Error loading dashboard:', error);
-            } finally {
-                setLoading(false);
+                enqueueSnackbar('Erro ao carregar dashboard. Tente novamente.', { variant: 'error' });
             }
         }
         loadInitialData();
-    }, []);
+    }, [enqueueSnackbar]);
 
     useEffect(() => {
         if (sseData) {
@@ -176,21 +175,12 @@ export function Dashboard() {
         try {
             const dashboardData = await getDashboard();
             setData(dashboardData);
+            enqueueSnackbar('Dashboard atualizado!', { variant: 'success' });
         } catch (error) {
             console.error('Error refreshing:', error);
+            enqueueSnackbar('Erro ao atualizar dashboard. Tente novamente.', { variant: 'error' });
         }
     };
-
-    if (loading) {
-        return (
-            <div className="flex-1 flex items-center justify-center">
-                <div className="text-center">
-                    <Loader2 size={48} className="animate-spin text-[var(--color-primary)] mx-auto mb-4" />
-                    <p className="text-[var(--color-text-muted)]">Carregando dados...</p>
-                </div>
-            </div>
-        );
-    }
 
     const stats = data?.stats || {
         instancias_ativas: 0,
@@ -204,7 +194,7 @@ export function Dashboard() {
     const totalRobots = (data?.rpas?.length || 0) + (data?.cronjobs?.length || 0) + (data?.deployments?.length || 0);
 
     return (
-        <div className="flex-1 flex flex-col min-h-screen">
+        <div className="flex-1 flex flex-col min-h-screen w-full">
             <Header
                 title="Dashboard"
                 subtitle="Visão geral do sistema"
@@ -212,7 +202,7 @@ export function Dashboard() {
                 onRefresh={handleRefresh}
             />
 
-            <main className="flex-1 p-6 space-y-6 overflow-y-auto">
+            <main className="flex-1 p-6 space-y-6 overflow-y-auto w-full">
                 {/* Stats Cards */}
                 <section className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
                     <StatCard

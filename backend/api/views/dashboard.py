@@ -115,9 +115,9 @@ def dashboard_full(request):
             deployments = []
 
         try:
-            vm_metrics = f_vm.result(timeout=5)
+            vm_metrics = f_vm.result(timeout=3)  # Reduzido de 5s para 3s para evitar requisições muito lentas
         except Exception as e:
-            logger.error(f"[{request_id}] Timeout/Erro ao obter VM Metrics: {e}")
+            logger.warning(f"[{request_id}] Timeout/Erro ao obter métricas VM (não crítico): {type(e).__name__}: {str(e)}")
             vm_metrics = None
 
         logger.info(f"[{request_id}] Coleta paralela concluída (ou atingiu timeout) em {time.time() - t_par_start:.3f}s")

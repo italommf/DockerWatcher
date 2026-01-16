@@ -1,68 +1,36 @@
 {
-  "name": "docker-watcher",
-  "version": "1.0.0",
-  "description": "Docker Watcher - Electron + React App",
-  "main": "electron/main.js",
+  "name": "frontend_new",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
   "scripts": {
-    "dev": "concurrently \"npm run dev:react\" \"npm run dev:electron\"",
-    "dev:react": "vite",
-    "dev:electron": "wait-on http://localhost:5173 && electron . --no-sandbox",
-    "build": "vite build",
-    "build:electron": "electron-builder",
-    "package": "npm run build && npm run build:electron",
-    "postinstall": "electron-builder install-app-deps"
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "lint": "eslint .",
+    "preview": "vite preview"
   },
-  "keywords": [
-    "electron",
-    "react",
-    "docker",
-    "watcher"
-  ],
-  "author": "",
-  "license": "MIT",
   "dependencies": {
-    "@emotion/react": "^11.11.1",
-    "@emotion/styled": "^11.11.0",
-    "@mui/icons-material": "^5.14.19",
-    "@mui/material": "^5.14.20",
-    "axios": "^1.6.0",
+    "axios": "^1.13.2",
+    "lucide-react": "^0.562.0",
     "notistack": "^3.0.1",
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0",
-    "react-router-dom": "^6.20.0",
-    "recharts": "^3.6.0"
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "react-router-dom": "^7.12.0"
   },
   "devDependencies": {
-    "@vitejs/plugin-react": "^4.2.1",
-    "concurrently": "^8.2.2",
-    "electron": "^28.0.0",
-    "electron-builder": "^24.9.1",
-    "vite": "^5.0.8",
-    "wait-on": "^7.2.0"
-  },
-  "build": {
-    "appId": "com.dockerwatcher.app",
-    "productName": "DockerWatcher",
-    "directories": {
-      "output": "release",
-      "buildResources": "build"
-    },
-    "win": {
-      "target": [
-        {
-          "target": "portable",
-          "arch": [
-            "x64"
-          ]
-        }
-      ],
-      "icon": "build/icon.ico"
-    },
-    "files": [
-      "renderer-dist/**/*",
-      "electron/**/*",
-      "package.json"
-    ],
-    "extraResources": []
+    "@eslint/js": "^9.39.1",
+    "@tailwindcss/vite": "^4.1.18",
+    "@types/node": "^24.10.1",
+    "@types/react": "^19.2.5",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^4.7.0",
+    "eslint": "^9.39.1",
+    "eslint-plugin-react-hooks": "^7.0.1",
+    "eslint-plugin-react-refresh": "^0.4.24",
+    "globals": "^16.5.0",
+    "tailwindcss": "^4.1.18",
+    "typescript": "~5.9.3",
+    "typescript-eslint": "^8.46.4",
+    "vite": "^6.4.1"
   }
 }

@@ -54,6 +54,7 @@ class JobViewSet(viewsets.ViewSet):
     def create(self, request):
         """Cria um job manualmente."""
         nome_rpa = request.data.get('nome_rpa')
+        docker_repository = request.data.get('docker_repository')
         docker_tag = request.data.get('docker_tag', 'latest')
         qtd_ram_maxima = request.data.get('qtd_ram_maxima', 512)
         
@@ -63,12 +64,32 @@ class JobViewSet(viewsets.ViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
+        # Buscar repositório do banco se não fornecido
+        if not docker_repository:
+            try:
+                from api.models import RoboDockerizado
+                rpa = RoboDockerizado.objects.get(nome=nome_rpa, tipo='rpa')
+                docker_repository = rpa.docker_repository
+                if not docker_repository:
+                    return Response(
+                        {'error': 'Repositório Docker não configurado para este RPA. Configure o repositório primeiro.'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+            except RoboDockerizado.DoesNotExist:
+                return Response(
+                    {'error': 'RPA não encontrado no banco de dados'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+        
+        # Construir imagem Docker
+        docker_image = f"{docker_repository}:{docker_tag}"
+        
         # Converter RAM para formato K8s
         memory_limit = f"{int(qtd_ram_maxima)}Mi"
         
         job = self.job_service.create(
             name=f"rpa-job-{nome_rpa.replace('_', '-').lower()}",
-            image=f"rpaglobal/{nome_rpa.lower()}:{docker_tag}",
+            image=docker_image,
             memory_limit=memory_limit,
             labels={'nome_robo': nome_rpa.lower()},
             env={'NOME_ROBO': nome_rpa.lower()}

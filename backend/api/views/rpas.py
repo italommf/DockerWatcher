@@ -91,9 +91,11 @@ class RPAViewSet(viewsets.ViewSet):
     
     def create(self, request):
         """Cria um novo RPA."""
+        logger.info(f"Dados recebidos para criar RPA: {request.data}")
         serializer = CreateRPASerializer(data=request.data)
         
         if not serializer.is_valid():
+            logger.warning(f"Erros de validação: {serializer.errors}")
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         
         dados = serializer.validated_data.copy()
@@ -105,9 +107,17 @@ class RPAViewSet(viewsets.ViewSet):
             tags.append('Exec')
         
         try:
+            # Verificar se já existe um RPA com o mesmo nome
+            if RoboDockerizado.objects.filter(nome=dados['nome_rpa'], tipo='rpa').exists():
+                return Response({
+                    'error': f'Já existe um RPA com o nome "{dados["nome_rpa"]}". Por favor, escolha outro nome.',
+                    'nome_rpa': ['Este nome já está em uso. Escolha outro nome.']
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
             rpa = RoboDockerizado.objects.create(
                 nome=dados['nome_rpa'],
                 tipo='rpa',
+                docker_repository=dados['docker_repository'],
                 docker_tag=dados['docker_tag'],
                 robo_uuid=dados.get('robo_uuid', ''),
                 qtd_max_instancias=dados['qtd_max_instancias'],
@@ -120,9 +130,25 @@ class RPAViewSet(viewsets.ViewSet):
                 tags=tags
             )
             
+            # Processar execuções pendentes imediatamente após criar
+            try:
+                from api.utils_robo import processar_execucoes_apos_criacao
+                resultado = processar_execucoes_apos_criacao(rpa)
+                if resultado['jobs_criados'] > 0:
+                    logger.info(f"RPA {rpa.nome} criado: {resultado['jobs_criados']} job(s) criado(s) de {resultado['execucoes_encontradas']} execuções pendentes")
+            except Exception as e:
+                logger.warning(f"Erro ao processar execuções após criar RPA {rpa.nome}: {e}")
+            
             return Response({'message': 'RPA criado com sucesso'}, status=status.HTTP_201_CREATED)
         except Exception as e:
-            logger.error(f"Erro ao criar RPA: {e}")
+            logger.error(f"Erro ao criar RPA: {e}", exc_info=True)
+            # Verificar se é erro de constraint UNIQUE
+            error_str = str(e)
+            if 'UNIQUE constraint' in error_str or 'unique constraint' in error_str.lower():
+                return Response({
+                    'error': f'Já existe um RPA com o nome "{dados.get("nome_rpa", "")}". Por favor, escolha outro nome.',
+                    'nome_rpa': ['Este nome já está em uso. Escolha outro nome.']
+                }, status=status.HTTP_400_BAD_REQUEST)
             return Response({'error': f'Erro ao criar RPA: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
     def update(self, request, pk=None):
@@ -136,6 +162,8 @@ class RPAViewSet(viewsets.ViewSet):
             rpa = RoboDockerizado.objects.get(nome=pk, tipo='rpa')
             dados = serializer.validated_data
             
+            if 'docker_repository' in dados:
+                rpa.docker_repository = dados['docker_repository']
             if 'docker_tag' in dados:
                 rpa.docker_tag = dados['docker_tag']
             if 'robo_uuid' in dados:
@@ -183,8 +211,10 @@ class RPAViewSet(viewsets.ViewSet):
     @action(detail=True, methods=['post'])
     def standby(self, request, pk=None):
         """Move RPA para standby e finaliza jobs."""
+        logger.info(f"Tentando mover RPA para standby. pk={pk}, tipo={type(pk)}")
         try:
             rpa = RoboDockerizado.objects.get(nome=pk, tipo='rpa')
+            logger.info(f"RPA encontrado: {rpa.nome}")
             
             # Deletar jobs ativos
             jobs_deletados = 0
@@ -210,8 +240,12 @@ class RPAViewSet(viewsets.ViewSet):
         except RoboDockerizado.DoesNotExist:
             return Response({'error': 'RPA não encontrado'}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
-            logger.error(f"Erro ao mover RPA para standby: {e}")
-            return Response({'error': f'Erro: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            logger.error(f"Erro ao mover RPA para standby: {e}", exc_info=True)
+            error_msg = str(e)
+            # Mensagens mais amigáveis para erros comuns
+            if 'not found' in error_msg.lower() or 'não encontrado' in error_msg.lower():
+                return Response({'error': 'RPA não encontrado no banco de dados'}, status=status.HTTP_404_NOT_FOUND)
+            return Response({'error': f'Erro ao mover RPA para standby: {error_msg}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
     @action(detail=True, methods=['post'])
     def activate(self, request, pk=None):

@@ -69,33 +69,46 @@ WSGI_APPLICATION = 'docker_watcher.wsgi.application'
 # IMPORTANTE: 
 # - Django usa o banco 'docker_watcher' para armazenar robôs (tabela: robos_dockerizados)
 # - O banco 'bwav4' continua sendo usado pelo database_service para consultar execuções
-try:
-    from config.config import get_mysql_config
-    mysql_config = get_mysql_config()
-    
-    DATABASES = {
-        'default': {
-            'ENGINE': 'django.db.backends.mysql',
-            'NAME': mysql_config.get('database', 'docker_watcher'),  # Usa banco do config.ini ou fallback
-            'USER': mysql_config['user'],
-            'PASSWORD': mysql_config['password'],
-            'HOST': mysql_config['host'],
-            'PORT': mysql_config['port'],
-            'CONN_MAX_AGE': 0,  # Fechar conexões após cada requisição (evita acúmulo)
-            'OPTIONS': {
-                'charset': 'utf8mb4',
-                'init_command': "SET sql_mode='STRICT_TRANS_TABLES'",
-                'connect_timeout': 10,  # Timeout de conexão em segundos
-                'read_timeout': 30,  # Timeout de leitura
-                'write_timeout': 30,  # Timeout de escrita
-            },
+# Para desenvolvimento local, usar SQLite por padrão
+# Para usar MySQL, instale mysqlclient ou configure adequadamente
+import os
+USE_MYSQL = os.getenv('USE_MYSQL', 'false').lower() == 'true'
+
+if USE_MYSQL:
+    try:
+        from config.config import get_mysql_config
+        mysql_config = get_mysql_config()
+        
+        DATABASES = {
+            'default': {
+                'ENGINE': 'django.db.backends.mysql',
+                'NAME': mysql_config.get('database', 'docker_watcher'),
+                'USER': mysql_config['user'],
+                'PASSWORD': mysql_config['password'],
+                'HOST': mysql_config['host'],
+                'PORT': mysql_config['port'],
+                'CONN_MAX_AGE': 0,
+                'OPTIONS': {
+                    'charset': 'utf8mb4',
+                    'init_command': "SET sql_mode='STRICT_TRANS_TABLES'",
+                    'connect_timeout': 10,
+                    'read_timeout': 30,
+                    'write_timeout': 30,
+                },
+            }
         }
-    }
-except Exception as e:
-    # Fallback para SQLite se não conseguir ler config.ini (desenvolvimento)
-    import logging
-    logger = logging.getLogger(__name__)
-    logger.warning(f"Erro ao configurar MySQL, usando SQLite como fallback: {e}")
+    except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Erro ao configurar MySQL, usando SQLite como fallback: {e}")
+        DATABASES = {
+            'default': {
+                'ENGINE': 'django.db.backends.sqlite3',
+                'NAME': BASE_DIR / 'db.sqlite3',
+            }
+        }
+else:
+    # Usar SQLite para desenvolvimento local (padrão)
     DATABASES = {
         'default': {
             'ENGINE': 'django.db.backends.sqlite3',

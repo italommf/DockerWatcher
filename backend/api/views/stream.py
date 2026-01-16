@@ -6,6 +6,7 @@ Providencia streaming de dados para Dashboard e Containers Rodando.
 import json
 import time
 import logging
+import sys
 from concurrent.futures import ThreadPoolExecutor
 from django.http import StreamingHttpResponse
 from api.utils import identify_robot
@@ -28,15 +29,20 @@ def get_services():
     global _pod_service, _job_service, _cronjob_service, _deployment_service, _pod_metrics, _vm_metrics
     
     if _pod_service is None:
-        from k8s import PodService, JobService, CronJobService, DeploymentService
-        from metrics import PodMetricsService, VMMetricsService, PROMETHEUS_AVAILABLE
-        
-        _pod_service = PodService()
-        _job_service = JobService()
-        _cronjob_service = CronJobService()
-        _deployment_service = DeploymentService()
-        _pod_metrics = PodMetricsService() if PROMETHEUS_AVAILABLE else None
-        _vm_metrics = VMMetricsService() if PROMETHEUS_AVAILABLE else None
+        try:
+            from k8s import PodService, JobService, CronJobService, DeploymentService
+            from metrics import PodMetricsService, VMMetricsService, PROMETHEUS_AVAILABLE
+            
+            _pod_service = PodService()
+            _job_service = JobService()
+            _cronjob_service = CronJobService()
+            _deployment_service = DeploymentService()
+            _pod_metrics = PodMetricsService() if PROMETHEUS_AVAILABLE else None
+            _vm_metrics = VMMetricsService() if PROMETHEUS_AVAILABLE else None
+        except Exception as e:
+            logger.error(f"Erro ao inicializar serviços K8s: {e}", exc_info=True)
+            # Retornar None para todos os serviços em caso de erro
+            return None, None, None, None, None, None
     
     return _pod_service, _job_service, _cronjob_service, _deployment_service, _pod_metrics, _vm_metrics
 
@@ -45,13 +51,71 @@ def generate_dashboard_events(interval=2):
     """
     Generator que envia eventos SSE a cada 'interval' segundos.
     """
-    from api.models import RoboDockerizado
+    try:
+        from api.models import RoboDockerizado
+    except Exception as e:
+        logger.error(f"Erro ao importar modelos: {e}", exc_info=True)
+        yield f"data: {json.dumps({'error': 'Erro ao inicializar modelos', 'timestamp': time.time()})}\n\n"
+        return
+    
+    # Enviar evento inicial (heartbeat) para confirmar conexão imediatamente
+    try:
+        yield f"data: {json.dumps({'type': 'connected', 'timestamp': time.time()})}\n\n"
+    except Exception as e:
+        logger.error(f"Erro ao enviar heartbeat inicial: {e}", exc_info=True)
+        # Tentar enviar erro como fallback
+        try:
+            yield f"data: {json.dumps({'error': 'Erro ao estabelecer conexão', 'timestamp': time.time()})}\n\n"
+        except:
+            pass
+        return
+    
+    # Inicializar serviços uma vez no início para evitar erros na primeira iteração
+    try:
+        pod_service, job_service, cronjob_service, deployment_service, pod_metrics, vm_metrics = get_services()
+    except Exception as e:
+        logger.error(f"Erro ao obter serviços: {e}", exc_info=True)
+        pod_service = job_service = cronjob_service = deployment_service = None
+        pod_metrics = vm_metrics = None
+    
+    if not pod_service or not job_service:
+        logger.warning("Serviços K8s não inicializados, enviando dados vazios")
+        # Enviar dados vazios mas manter conexão ativa
+        while True:
+            if sys.is_finalizing():
+                break
+            error_data = {
+                "error": "Serviços K8s não disponíveis",
+                "timestamp": time.time(),
+                "pods": [],
+                "jobs": [],
+                "cronjobs": [],
+                "deployments": [],
+                "stats": {
+                    "instancias_ativas": 0,
+                    "execucoes_pendentes": 0,
+                    "falhas_containers": 0,
+                    "rpas_ativos": 0,
+                    "cronjobs_ativos": 0,
+                    "deployments_ativos": 0,
+                },
+                "vm_metrics": None,
+                "pod_metrics": []
+            }
+            yield f"data: {json.dumps(error_data)}\n\n"
+            try:
+                time.sleep(interval)
+            except (KeyboardInterrupt, SystemExit):
+                break
+        return
     
     while True:
+        # Removida verificação de sys.is_finalizing() no início do loop
+        # O Django dev server gerencia o shutdown automaticamente
+        # Verificamos apenas em pontos críticos (ThreadPoolExecutor, sleep)
+            
         t_start = time.time()
         try:
-            # Obter serviços (lazy loading)
-            pod_service, job_service, cronjob_service, deployment_service, pod_metrics, vm_metrics = get_services()
             
             # Buscar robôs cadastrados para filtrar e pegar apelidos
             robos = list(RoboDockerizado.objects.filter(ativo=True))
@@ -60,16 +124,33 @@ def generate_dashboard_events(interval=2):
             
             # Buscar dados em tempo real em paralelo
             t_par_start = time.time()
-            with ThreadPoolExecutor(max_workers=5) as executor:
-                f_pods = executor.submit(pod_service.list)
-                f_jobs = executor.submit(job_service.list)
-                f_cronjobs = executor.submit(cronjob_service.list)
-                f_deployments = executor.submit(deployment_service.list)
-                
-                pods = f_pods.result()
-                jobs = f_jobs.result()
-                cronjobs = f_cronjobs.result()
-                deployments = f_deployments.result()
+            pods = []
+            jobs = []
+            cronjobs = []
+            deployments = []
+            
+            try:
+                with ThreadPoolExecutor(max_workers=5) as executor:
+                    f_pods = executor.submit(pod_service.list)
+                    f_jobs = executor.submit(job_service.list)
+                    f_cronjobs = executor.submit(cronjob_service.list)
+                    f_deployments = executor.submit(deployment_service.list)
+                    
+                    pods = f_pods.result(timeout=5)
+                    jobs = f_jobs.result(timeout=5)
+                    cronjobs = f_cronjobs.result(timeout=5)
+                    deployments = f_deployments.result(timeout=5)
+            except RuntimeError as e:
+                if "cannot schedule new futures after interpreter shutdown" in str(e):
+                    logger.info("Python em shutdown, encerrando SSE stream graciosamente")
+                    break
+                # Usar debug para reduzir spam de logs em caso de erros temporários
+                logger.debug(f"Erro ao buscar dados K8s: {e}")
+                # Continuar com listas vazias em caso de erro
+            except Exception as e:
+                # Usar debug para reduzir spam de logs em caso de erros temporários
+                logger.debug(f"Erro ao buscar dados K8s (timeout ou outro): {e}")
+                # Continuar com listas vazias em caso de erro
             
             logger.debug(f"[SSE Dashboard] K8s API parallel fetch in {time.time() - t_par_start:.3f}s")
             
@@ -132,7 +213,7 @@ def generate_dashboard_events(interval=2):
             vm_data = None
             if vm_metrics:
                 try:
-                    vm_data = vm_metrics.get_current()
+                    vm_data = vm_metrics.get_all()
                 except Exception as e:
                     logger.warning(f"Erro ao obter métricas VM: {e}")
             
@@ -159,13 +240,30 @@ def generate_dashboard_events(interval=2):
             }
             yield f"data: {json.dumps(sse_data)}\n\n"
             
+        except RuntimeError as e:
+            if "cannot schedule new futures after interpreter shutdown" in str(e) or "interpreter shutdown" in str(e):
+                logger.info("Python em shutdown, encerrando SSE stream graciosamente")
+                break
+            logger.error(f"Erro no SSE stream: {e}", exc_info=True)
+            error_data = {"error": str(e), "timestamp": time.time()}
+            yield f"data: {json.dumps(error_data)}\n\n"
         except Exception as e:
             logger.error(f"Erro no SSE stream: {e}", exc_info=True)
             error_data = {"error": str(e), "timestamp": time.time()}
             yield f"data: {json.dumps(error_data)}\n\n"
         
+        # Verificar shutdown apenas antes do sleep (não no início do loop)
+        # Isso evita encerrar prematuramente conexões válidas
+        if sys.is_finalizing():
+            logger.info("Python em shutdown, encerrando SSE stream")
+            break
+            
         # Aguardar intervalo antes do próximo evento
-        time.sleep(interval)
+        try:
+            time.sleep(interval)
+        except (KeyboardInterrupt, SystemExit):
+            logger.info("SSE stream interrompido")
+            break
 
 
 def generate_jobs_events(interval=1):
@@ -176,6 +274,11 @@ def generate_jobs_events(interval=1):
     from api.models import RoboDockerizado
     
     while True:
+        # Verificar se o Python está em shutdown
+        if sys.is_finalizing():
+            logger.info("Python em shutdown, encerrando SSE jobs stream")
+            break
+            
         t_start = time.time()
         try:
             # Obter serviços (lazy loading)
@@ -187,12 +290,18 @@ def generate_jobs_events(interval=1):
             
             # Coleta em paralelo
             t_par_start = time.time()
-            with ThreadPoolExecutor(max_workers=2) as executor:
-                f_jobs = executor.submit(job_service.list)
-                f_pods = executor.submit(pod_service.list)
-                
-                jobs = f_jobs.result()
-                pods = f_pods.result()
+            try:
+                with ThreadPoolExecutor(max_workers=2) as executor:
+                    f_jobs = executor.submit(job_service.list)
+                    f_pods = executor.submit(pod_service.list)
+                    
+                    jobs = f_jobs.result()
+                    pods = f_pods.result()
+            except RuntimeError as e:
+                if "cannot schedule new futures after interpreter shutdown" in str(e):
+                    logger.info("Python em shutdown, encerrando SSE jobs stream graciosamente")
+                    break
+                raise
             
             logger.debug(f"[SSE Jobs] K8s API parallel fetch in {time.time() - t_par_start:.3f}s")
             
@@ -226,11 +335,25 @@ def generate_jobs_events(interval=1):
             
             yield f"data: {json.dumps(data)}\n\n"
             
+        except RuntimeError as e:
+            if "cannot schedule new futures after interpreter shutdown" in str(e) or "interpreter shutdown" in str(e):
+                logger.info("Python em shutdown, encerrando SSE jobs stream graciosamente")
+                break
+            logger.error(f"Erro no SSE jobs stream: {e}")
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
         except Exception as e:
             logger.error(f"Erro no SSE jobs stream: {e}")
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
         
-        time.sleep(interval)
+        # Verificar shutdown antes de aguardar
+        if sys.is_finalizing():
+            break
+            
+        try:
+            time.sleep(interval)
+        except (KeyboardInterrupt, SystemExit):
+            logger.info("SSE jobs stream interrompido")
+            break
 
 
 # @api_view(['GET'])
@@ -239,23 +362,32 @@ def stream_dashboard(request):
     Endpoint SSE para Dashboard.
     Envia updates a cada 2 segundos.
     """
-    # Usar query_params do Django puro já que removemos api_view
-    interval_str = request.GET.get('interval', '2')
     try:
-        interval = int(interval_str)
-    except ValueError:
-        interval = 2
+        # Usar query_params do Django puro já que removemos api_view
+        interval_str = request.GET.get('interval', '2')
+        try:
+            interval = int(interval_str)
+        except ValueError:
+            interval = 2
+            
+        interval = max(1, min(10, interval))  # Clamp entre 1 e 10 segundos
         
-    interval = max(1, min(10, interval))  # Clamp entre 1 e 10 segundos
-    
-    response = StreamingHttpResponse(
-        generate_dashboard_events(interval),
-        content_type='text/event-stream'
-    )
-    response['Cache-Control'] = 'no-cache'
-    response['Content-Encoding'] = 'none' # Evitar compressão que quebra SSE
-    response['X-Accel-Buffering'] = 'no'  # Para nginx
-    return response
+        response = StreamingHttpResponse(
+            generate_dashboard_events(interval),
+            content_type='text/event-stream'
+        )
+        response['Cache-Control'] = 'no-cache'
+        response['Content-Encoding'] = 'none' # Evitar compressão que quebra SSE
+        response['X-Accel-Buffering'] = 'no'  # Para nginx
+        # Não adicionar Connection: keep-alive - o servidor de desenvolvimento do Django não permite headers hop-by-hop
+        # CORS headers se necessário
+        response['Access-Control-Allow-Origin'] = '*'
+        response['Access-Control-Allow-Headers'] = 'Cache-Control'
+        return response
+    except Exception as e:
+        logger.error(f"Erro ao iniciar stream_dashboard: {e}", exc_info=True)
+        from django.http import JsonResponse
+        return JsonResponse({'error': str(e)}, status=500)
 
 
 # @api_view(['GET'])

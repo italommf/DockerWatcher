@@ -26,7 +26,9 @@ class PodLogsSerializer(serializers.Serializer):
     logs = serializers.CharField()
 
 class RPASerializer(serializers.Serializer):
-    nome_rpa = serializers.CharField()
+    nome = serializers.CharField()  # Campo principal para identificação
+    nome_rpa = serializers.CharField()  # Compatibilidade
+    docker_repository = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     docker_tag = serializers.CharField()
     robo_uuid = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     qtd_max_instancias = serializers.IntegerField()
@@ -41,6 +43,7 @@ class RPASerializer(serializers.Serializer):
 
 class CreateRPASerializer(serializers.Serializer):
     nome_rpa = serializers.CharField()
+    docker_repository = serializers.CharField(required=True, allow_blank=False, help_text="Repositório Docker completo (ex: usuario/imagem)")
     docker_tag = serializers.CharField()
     robo_uuid = serializers.CharField(required=True, allow_blank=False, help_text="UUID do robô no MongoDB (obrigatório)")
     qtd_max_instancias = serializers.IntegerField()
@@ -51,6 +54,7 @@ class CreateRPASerializer(serializers.Serializer):
     tags = serializers.ListField(child=serializers.CharField(), required=False, allow_null=True)
 
 class UpdateRPASerializer(serializers.Serializer):
+    docker_repository = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     docker_tag = serializers.CharField(required=False)
     robo_uuid = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     qtd_max_instancias = serializers.IntegerField(required=False)
@@ -82,6 +86,7 @@ class CreateCronjobSerializer(serializers.Serializer):
     schedule = serializers.CharField()
     timezone = serializers.CharField(default='America/Sao_Paulo')
     nome_robo = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    robo_uuid = serializers.CharField(required=False, allow_blank=True, allow_null=True, help_text="UUID do robô no MongoDB para buscar execuções")
     docker_repository = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     docker_tag = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     docker_image = serializers.CharField(required=False, allow_blank=True, allow_null=True)  # Mantido para compatibilidade
@@ -116,6 +121,7 @@ class CreateDeploymentSerializer(serializers.Serializer):
     name = serializers.CharField()
     replicas = serializers.IntegerField(default=1)
     nome_robo = serializers.CharField()
+    robo_uuid = serializers.CharField(required=False, allow_blank=True, allow_null=True, help_text="UUID do robô no MongoDB para buscar execuções")
     docker_image = serializers.CharField()
     memory_limit = serializers.CharField(default='256Mi')
     dependente_de_execucoes = serializers.BooleanField(default=True)

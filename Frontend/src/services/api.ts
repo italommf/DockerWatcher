@@ -23,17 +23,17 @@ export const getRPA = (id: number) =>
 export const createRPA = (data: Partial<RPA>) =>
     api.post<RPA>('/rpas/', data).then(res => res.data);
 
-export const updateRPA = (id: number, data: Partial<RPA>) =>
-    api.put<RPA>(`/rpas/${id}/`, data).then(res => res.data);
+export const updateRPA = (nome: string, data: Partial<RPA>) =>
+    api.put<RPA>(`/rpas/${nome}/`, data).then(res => res.data);
 
-export const deleteRPA = (id: number) =>
-    api.delete(`/rpas/${id}/`).then(res => res.data);
+export const deleteRPA = (nome: string) =>
+    api.delete(`/rpas/${nome}/`).then(res => res.data);
 
-export const standbyRPA = (id: number) =>
-    api.post(`/rpas/${id}/standby/`).then(res => res.data);
+export const standbyRPA = (nome: string) =>
+    api.post(`/rpas/${nome}/standby/`).then(res => res.data);
 
-export const activateRPA = (id: number) =>
-    api.post(`/rpas/${id}/activate/`).then(res => res.data);
+export const activateRPA = (nome: string) =>
+    api.post(`/rpas/${nome}/activate/`).then(res => res.data);
 
 // CronJobs
 export const getCronJobs = () =>

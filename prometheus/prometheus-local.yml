@@ -1,0 +1,28 @@
+# Configuração do Prometheus para desenvolvimento local
+# Este arquivo é usado quando rodando Prometheus via docker-compose para desenvolvimento
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # Para Kubernetes - quando prometheus estiver dentro do cluster
+  # Descomente se precisar coletar métricas do Kubernetes
+  # - job_name: 'kubernetes-nodes'
+  #   kubernetes_sd_configs:
+  #     - role: node
+  #   relabel_configs:
+  #     - source_labels: [__address__]
+  #       regex: (.+):(.+)
+  #       target_label: __address__
+  #       replacement: ${1}:9100
+
+  # cAdvisor para métricas de containers (quando disponível)
+  # - job_name: 'cadvisor'
+  #   static_configs:
+  #     - targets: ['host.docker.internal:8080']

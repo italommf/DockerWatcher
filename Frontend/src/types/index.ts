@@ -6,6 +6,7 @@ export interface RPA {
     nome_rpa?: string;
     apelido: string;
     robo_uuid: string;
+    docker_repository?: string;
     docker_tag: string;
     qtd_max_instancias: number;
     qtd_ram_maxima: number;

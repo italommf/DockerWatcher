@@ -144,6 +144,7 @@ class PrometheusClient:
     
     def is_available(self) -> bool:
         """Verifica se Prometheus está disponível (usa circuit breaker)."""
+        # Se o circuit breaker está aberto, retornar False sem fazer requisição
         if not self._check_circuit():
             return False
             
@@ -176,6 +177,9 @@ class PrometheusClient:
 
 # Singleton
 _client: Optional[PrometheusClient] = None
+
+# Flag global de disponibilidade (para compatibilidade com código existente)
+PROMETHEUS_AVAILABLE = True
 
 
 def get_prometheus_client() -> PrometheusClient:

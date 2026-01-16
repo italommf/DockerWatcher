@@ -90,6 +90,8 @@ class DeploymentViewSet(viewsets.ViewSet):
         
         try:
             # Salvar no banco de dados
+            robo_uuid = dados.get('robo_uuid', '').strip()
+            
             deployment_db = RoboDockerizado.objects.create(
                 nome=nome,
                 tipo='deployment',
@@ -97,6 +99,7 @@ class DeploymentViewSet(viewsets.ViewSet):
                 docker_repository=docker_image.split(':')[0] if ':' in docker_image else docker_image,
                 replicas=replicas,
                 memory_limit=memory_limit,
+                robo_uuid=robo_uuid,
                 ativo=True,
                 apelido=apelido,
                 tags=tags,
@@ -120,6 +123,16 @@ class DeploymentViewSet(viewsets.ViewSet):
                     {'error': 'Erro ao criar deployment no Kubernetes'}, 
                     status=status.HTTP_500_INTERNAL_SERVER_ERROR
                 )
+            
+            # Processar execuções pendentes imediatamente após criar (apenas se for dependente de execuções)
+            if dependente_de_execucoes and robo_uuid:
+                try:
+                    from api.utils_robo import processar_execucoes_apos_criacao
+                    resultado = processar_execucoes_apos_criacao(deployment_db)
+                    if resultado['jobs_criados'] > 0:
+                        logger.info(f"Deployment {deployment_db.nome} criado: {resultado['jobs_criados']} job(s) criado(s) de {resultado['execucoes_encontradas']} execuções pendentes")
+                except Exception as e:
+                    logger.warning(f"Erro ao processar execuções após criar Deployment {deployment_db.nome}: {e}")
             
             return Response({'message': 'Deployment criado com sucesso'}, status=status.HTTP_201_CREATED)
         except Exception as e:
